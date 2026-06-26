@@ -1,0 +1,47 @@
+from __future__ import annotations
+from datetime import datetime, time
+from enum import StrEnum
+from typing import Optional
+
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Time, DateTime, Enum, ForeignKey, func
+from db.database import Base
+
+
+class RoleLevel(StrEnum):
+    ic = "ic"
+    l1_manager = "l1_manager"
+    l2_lead = "l2_lead"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(unique=True, index=True)
+    name: Mapped[str]
+    role: Mapped[str]
+
+    # Hierarchy
+    role_level: Mapped[RoleLevel] = mapped_column(Enum(RoleLevel), default=RoleLevel.ic)
+    manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), default=None)
+    manager: Mapped[Optional["User"]] = relationship("User", remote_side=[id], back_populates="reports")
+    reports: Mapped[list["User"]] = relationship("User", back_populates="manager")
+
+    # Google OAuth
+    refresh_token: Mapped[Optional[str]] = mapped_column(default=None)
+
+    # Slack integration
+    slack_user_id: Mapped[Optional[str]] = mapped_column(unique=True, default=None)
+
+    # Live status
+    in_office: Mapped[bool] = mapped_column(default=False)
+    wfh: Mapped[bool] = mapped_column(default=False)
+    late_arrive_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
+    early_exit_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
+
+    # Leave balances (weekdays only)
+    sick_leaves_taken: Mapped[int] = mapped_column(default=0)
+    casual_leaves_taken: Mapped[int] = mapped_column(default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

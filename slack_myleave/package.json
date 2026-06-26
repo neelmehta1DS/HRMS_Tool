@@ -1,0 +1,17 @@
+{
+  "name": "leavebot",
+  "version": "0.1.0",
+  "description": "Slack leave-management bot (first variation) — Socket Mode, in-memory store",
+  "main": "app.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node app.js",
+    "test": "node selftest.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.21.4",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.21",
+    "dotenv": "^16.4.5"
+  }
+}
