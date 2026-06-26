@@ -33,6 +33,8 @@ function menuView(user, balance) {
             text: { type: 'plain_text', text: 'My Balance' } },
           { type: 'button', action_id: 'leave_holidays',
             text: { type: 'plain_text', text: 'Holiday Calendar' } },
+          { type: 'button', action_id: 'leave_availability',
+            text: { type: 'plain_text', text: 'Team Availability' } },
         ],
       },
     ],
@@ -160,6 +162,60 @@ function approverMessage(leave, applicant, stepLabel, days) {
   };
 }
 
+// ---------- Modal: team availability ----------
+function teamAvailabilityView(data) {
+  const today = dayjs().format('ddd, D MMM YYYY');
+  const blocks = [
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `:calendar: *${today}*` }] },
+    { type: 'divider' },
+  ];
+
+  // On Leave section
+  blocks.push({ type: 'section', text: { type: 'mrkdwn',
+    text: `:palm_tree: *On Leave Today*  ·  ${data.on_leave.length}` } });
+
+  if (data.on_leave.length === 0) {
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '_Nobody is on leave today._' } });
+  } else {
+    const lines = data.on_leave.map(p => {
+      const isMultiDay = p.end_date > dayjs().format('YYYY-MM-DD');
+      const until = isMultiDay ? `  ·  back ${dayjs(p.end_date).add(1, 'day').format('D MMM')}` : '';
+      return `• *${p.name}* — ${p.leave_type}${until}`;
+    });
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
+  }
+
+  blocks.push({ type: 'divider' });
+
+  // Available section — grouped by status
+  blocks.push({ type: 'section', text: { type: 'mrkdwn',
+    text: `:white_check_mark: *Available*  ·  ${data.available.length}` } });
+
+  if (data.available.length === 0) {
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '_Everyone is on leave!_' } });
+  } else {
+    const groups = [
+      { key: 'In Office',     emoji: ':office:',             label: 'In Office'       },
+      { key: 'WFH',           emoji: ':house_with_garden:',  label: 'Working From Home' },
+      { key: 'Out of Office', emoji: ':bust_in_silhouette:', label: 'Out of Office'   },
+    ];
+    for (const g of groups) {
+      const people = data.available.filter(p => p.status === g.key);
+      if (people.length === 0) continue;
+      blocks.push({ type: 'section', text: { type: 'mrkdwn',
+        text: `${g.emoji} *${g.label}*\n${people.map(p => `• ${p.name}`).join('\n')}` } });
+    }
+  }
+
+  return {
+    type: 'modal',
+    callback_id: 'team_availability_view',
+    title: { type: 'plain_text', text: 'Team Availability' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks,
+  };
+}
+
 // ---------- Modal: reject reason ----------
 function rejectReasonView(leaveId, channel, ts) {
   return {
@@ -187,5 +243,5 @@ function decidedBlocks(leave, summaryLine) {
 
 module.exports = {
   menuView, applyView, balanceView, holidaysView,
-  approverMessage, rejectReasonView, decidedBlocks,
+  approverMessage, rejectReasonView, decidedBlocks, teamAvailabilityView,
 };

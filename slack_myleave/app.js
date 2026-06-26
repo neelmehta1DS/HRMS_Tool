@@ -96,6 +96,16 @@ app.action('leave_holidays', async ({ ack, body, client }) => {
   await client.views.push({ trigger_id: body.trigger_id, view: V.holidaysView(store.HOLIDAYS) });
 });
 
+app.action('leave_availability', async ({ ack, body, client }) => {
+  await ack();
+  try {
+    const data = await api.getTeamAvailability();
+    await client.views.push({ trigger_id: body.trigger_id, view: V.teamAvailabilityView(data) });
+  } catch (e) {
+    console.error('[availability error]', e.message);
+  }
+});
+
 // ---------- Apply form submit ----------
 app.view('leave_apply_submit', async ({ ack, body, view, client }) => {
   const { slackId } = JSON.parse(view.private_metadata);

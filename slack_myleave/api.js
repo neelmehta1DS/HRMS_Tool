@@ -62,4 +62,9 @@ async function setLeaveMessage(leaveId, level, channel, ts) {
   return res.data;
 }
 
-module.exports = { getUser, createLeave, getLeave, approveLeave, rejectLeave, setLeaveMessage };
+async function getTeamAvailability() {
+  const res = await client.get('/bot/team-availability');
+  return res.data;
+}
+
+module.exports = { getUser, createLeave, getLeave, approveLeave, rejectLeave, setLeaveMessage, getTeamAvailability };

@@ -195,6 +195,43 @@ def reject_leave(
     return leave
 
 
+@router.get("/team-availability")
+def get_team_availability(
+    db: Annotated[Session, Depends(get_db)],
+    _=Depends(verify_bot_key),
+):
+    today = date.today()
+
+    on_leave_records = db.query(Leave).filter(
+        Leave.start_date <= today,
+        Leave.end_date >= today,
+        Leave.approved_by_l1 == True,
+        Leave.approved_by_l2 == True,
+    ).all()
+
+    on_leave_user_ids = {l.user_id for l in on_leave_records}
+
+    on_leave = [
+        {
+            "name": l.user.name,
+            "leave_type": str(l.leave_type).capitalize(),
+            "end_date": str(l.end_date),
+        }
+        for l in on_leave_records
+    ]
+
+    all_users = db.query(User).order_by(User.name).all()
+    available = [
+        {
+            "name": u.name,
+            "status": "WFH" if u.wfh else ("In Office" if u.in_office else "Out of Office"),
+        }
+        for u in all_users if u.id not in on_leave_user_ids
+    ]
+
+    return {"on_leave": on_leave, "available": available}
+
+
 @router.patch("/leaves/{leave_id}/message")
 def set_leave_message(
     leave_id: int,
