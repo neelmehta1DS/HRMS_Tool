@@ -3,6 +3,7 @@ import Sidebar from "./components/layout/Sidebar";
 import Dashboard from "./pages/Dashboard";
 import Leaves from "./pages/Leaves";
 import Catchups from "./pages/Catchups";
+import Login from "./pages/Login";
 import { getMe, logout, getUsers, getMyLeaves, getTeamLeaves, getMyCatchups, getManagerCatchups } from "./lib/api";
 import { isManager } from "./lib/utils";
 
@@ -24,7 +25,7 @@ export default function App() {
         fetchAll(user);
       })
       .catch(() => {
-        window.location.href = "http://localhost:8000/auth/login";
+        // Leave currentUser null — Login page will be shown
       })
       .finally(() => setLoading(false));
   }, []);
@@ -74,7 +75,7 @@ export default function App() {
 
   async function handleLogout() {
     await logout();
-    window.location.href = "http://localhost:8000/auth/login";
+    setCurrentUser(null);
   }
 
   if (loading) {
@@ -85,7 +86,7 @@ export default function App() {
     );
   }
 
-  if (!currentUser) return null;
+  if (!currentUser) return <Login />;
 
   const allCatchups = [
     ...myCatchups.upcoming,
