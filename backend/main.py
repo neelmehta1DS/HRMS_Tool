@@ -24,7 +24,6 @@ def _migrate():
         for col, definition in [
             ("sick_leaves_taken",   "INTEGER NOT NULL DEFAULT 0"),
             ("casual_leaves_taken", "INTEGER NOT NULL DEFAULT 0"),
-            ("wfh_taken",           "INTEGER NOT NULL DEFAULT 0"),
         ]:
             if col not in existing:
                 conn.execute(__import__("sqlalchemy").text(f"ALTER TABLE users ADD COLUMN {col} {definition}"))

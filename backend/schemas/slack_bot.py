@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Optional
 from pydantic import BaseModel
 from models.users import RoleLevel
+from models.leaves import LeaveType
 
 
 class BotManagerInfo(BaseModel):
@@ -25,7 +26,7 @@ class BotUserResponse(BaseModel):
 
 class BotLeaveCreate(BaseModel):
     slack_user_id: str
-    leave_type: str
+    leave_type: LeaveType
     start_date: str
     end_date: str
     note: Optional[str] = None

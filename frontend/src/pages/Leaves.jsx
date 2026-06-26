@@ -380,16 +380,18 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
   }
 
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
 
   async function handleDelete(id) {
     if (deletingId) return;
     setDeletingId(id);
+    setDeleteError(null);
     try {
       await deleteLeave(id);
       onRefresh();
       if (!isLogOnly) getMyBalance().then(setBalance).catch(() => {});
     } catch (e) {
-      alert(e.response?.data?.detail || "Failed to withdraw leave.");
+      setDeleteError(e.response?.data?.detail || "Failed to withdraw leave.");
     } finally {
       setDeletingId(null);
     }
@@ -418,6 +420,15 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
           )}
         </div>
       </div>
+
+      {deleteError && (
+        <div className="mb-5 rounded-xl bg-red-50 border border-red-100 px-4 py-3 flex items-center justify-between">
+          <p className="text-sm text-red-500">{deleteError}</p>
+          <button onClick={() => setDeleteError(null)} className="text-red-400 hover:text-red-600 ml-3 flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Leave balance summary — not shown for pure L2 */}
       {(ic || l1) && (

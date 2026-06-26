@@ -372,9 +372,9 @@ def delete_leave(leave_id: int, current_user: Annotated[User, Depends(get_curren
     if fully_approved:
         days = count_weekdays(leave.start_date, leave.end_date)
         if leave.leave_type == LeaveType.sick:
-            current_user.sick_leaves_taken -= days
+            current_user.sick_leaves_taken = max(0, current_user.sick_leaves_taken - days)
         elif leave.leave_type == LeaveType.casual:
-            current_user.casual_leaves_taken -= days
+            current_user.casual_leaves_taken = max(0, current_user.casual_leaves_taken - days)
 
     # Snapshot what we need for Slack before deleting
     type_label = str(leave.leave_type).capitalize()

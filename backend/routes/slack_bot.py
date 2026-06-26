@@ -1,5 +1,5 @@
 from typing import Annotated
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
@@ -76,7 +76,21 @@ def create_leave_for_user(
     if end < start:
         raise HTTPException(status_code=422, detail="end_date cannot be before start_date")
 
-    auto_approve = body.leave_type == "sick" or not user.manager
+    today = date.today()
+    if body.leave_type == LeaveType.sick:
+        if start != today or end != today:
+            raise HTTPException(status_code=422, detail="Sick leave can only be applied for today.")
+    elif body.leave_type == LeaveType.casual:
+        advance = (start - today).days
+        is_multi = (end - start).days >= 1
+        min_advance = 5 if is_multi else 1
+        if advance < min_advance:
+            label = "multi-day" if is_multi else "single-day"
+            earliest = today + timedelta(days=min_advance)
+            raise HTTPException(status_code=422,
+                detail=f"Casual leave ({label}) needs {min_advance} day(s) advance notice. Earliest start: {earliest}.")
+
+    auto_approve = body.leave_type == LeaveType.sick or not user.manager
     leave = Leave(
         user_id=user.id,
         leave_type=body.leave_type,
@@ -89,9 +103,9 @@ def create_leave_for_user(
     db.add(leave)
     if auto_approve:
         days = count_weekdays(start, end)
-        if body.leave_type == "sick":
+        if body.leave_type == LeaveType.sick:
             user.sick_leaves_taken += days
-        elif body.leave_type == "casual":
+        elif body.leave_type == LeaveType.casual:
             user.casual_leaves_taken += days
     db.commit()
     db.refresh(leave)
