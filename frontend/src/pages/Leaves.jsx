@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, X, CalendarDays, PartyPopper } from "lucide-react";
+import { Plus, X, CalendarDays, PartyPopper, Trash2 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import Avatar from "../components/ui/Avatar";
 import { formatDate, getLeaveStatus, isIC, isL1, isL2 } from "../lib/utils";
-import { createLeave, approveLeave, rejectLeave, getManagerLeaves, getMyBalance, getHolidays, getLeaveLimits } from "../lib/api";
+import { createLeave, approveLeave, rejectLeave, deleteLeave, getManagerLeaves, getMyBalance, getHolidays, getLeaveLimits } from "../lib/api";
 
 function LeavePieCard({ label, used, total, color }) {
   const remaining = Math.max(total - used, 0);
@@ -344,6 +344,22 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
     refreshApprovals();
   }
 
+  const [deletingId, setDeletingId] = useState(null);
+
+  async function handleDelete(id) {
+    if (deletingId) return;
+    setDeletingId(id);
+    try {
+      await deleteLeave(id);
+      onRefresh();
+      if (!isLogOnly) getMyBalance().then(setBalance).catch(() => {});
+    } catch (e) {
+      alert(e.response?.data?.detail || "Failed to withdraw leave.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const { pending = [], upcoming = [], rejected = [], previous = [] } = myLeaves;
 
   return (
@@ -391,7 +407,7 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
                 ? <p className="text-sm py-2 text-slate-300">None</p>
                 : <div className="space-y-2">
                     {section.items.map(l => (
-                      <div key={l.id} className={`bg-white rounded-xl border ${section.borderColor} p-4`}>
+                      <div key={l.id} className={`group relative bg-white rounded-xl border ${section.borderColor} p-4`}>
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className="text-sm font-semibold text-slate-800 capitalize">{l.leave_type}</span>
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${section.badge}`}>{section.badgeLabel}</span>
@@ -400,6 +416,13 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
                           {formatDate(l.start_date)}{l.start_date !== l.end_date ? " → " + formatDate(l.end_date) : ""}
                         </p>
                         {l.note && <p className="text-xs mt-1 italic text-slate-400">{l.note}</p>}
+                        <button
+                          onClick={() => handleDelete(l.id)}
+                          disabled={deletingId === l.id}
+                          className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -466,7 +489,7 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
             ? <p className="text-sm py-2 text-slate-300">None</p>
             : <div className="space-y-2">
                 {upcoming.map(l => (
-                  <div key={l.id} className="bg-white rounded-xl border border-emerald-100 p-4">
+                  <div key={l.id} className="group relative bg-white rounded-xl border border-emerald-100 p-4">
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="text-sm font-semibold text-slate-800 capitalize">{l.leave_type}</span>
                       <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">Logged</span>
@@ -475,6 +498,13 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
                       {formatDate(l.start_date)}{l.start_date !== l.end_date ? " → " + formatDate(l.end_date) : ""}
                     </p>
                     {l.note && <p className="text-xs mt-1 italic text-slate-400">{l.note}</p>}
+                    <button
+                      onClick={() => handleDelete(l.id)}
+                      disabled={deletingId === l.id}
+                      className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>

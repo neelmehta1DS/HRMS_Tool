@@ -20,6 +20,7 @@ export const getManagerLeaves = () => api.get("/leaves/manager/me").then(r => r.
 export const createLeave = (data) => api.post("/leaves", data).then(r => r.data);
 export const approveLeave = (id) => api.patch(`/leaves/${id}/approve`).then(r => r.data);
 export const rejectLeave = (id, reason) => api.patch(`/leaves/${id}/reject`, { reason }).then(r => r.data);
+export const deleteLeave = (id) => api.delete(`/leaves/${id}`).then(r => r.data);
 export const getMyBalance = () => api.get("/leaves/me/balance").then(r => r.data);
 export const getHolidays = () => api.get("/leaves/holidays").then(r => r.data);
 export const getLeaveLimits = () => api.get("/leaves/limits").then(r => r.data);

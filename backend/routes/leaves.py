@@ -362,5 +362,40 @@ def delete_leave(leave_id: int, current_user: Annotated[User, Depends(get_curren
         elif leave.leave_type == LeaveType.casual:
             current_user.casual_leaves_taken -= days
 
+    # Snapshot what we need for Slack before deleting
+    type_label = str(leave.leave_type).capitalize()
+    date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
+    l1_slack_id = current_user.manager.slack_user_id if current_user.manager else None
+    l2_slack_id = current_user.manager.manager.slack_user_id if current_user.manager and current_user.manager.manager else None
+    l1_channel, l1_ts = leave.slack_l1_channel, leave.slack_l1_ts
+    l2_channel, l2_ts = leave.slack_l2_channel, leave.slack_l2_ts
+
     db.delete(leave)
     db.commit()
+
+    # Delete manager approval messages so they can no longer action the request
+    slack.delete_msg(l1_channel, l1_ts)
+    slack.delete_msg(l2_channel, l2_ts)
+
+    # Notify manager(s) that the request was withdrawn
+    withdrawal_note = (
+        f":x: *Leave request withdrawn* by {current_user.name}.\n"
+        f"_{type_label} · {date_str}_"
+    )
+    if l1_slack_id:
+        slack.dm(l1_slack_id, text=withdrawal_note, blocks=[
+            {"type": "section", "text": {"type": "mrkdwn", "text": withdrawal_note}}
+        ])
+    if l2_slack_id:
+        slack.dm(l2_slack_id, text=withdrawal_note, blocks=[
+            {"type": "section", "text": {"type": "mrkdwn", "text": withdrawal_note}}
+        ])
+
+    # Confirm withdrawal to the user
+    if current_user.slack_user_id:
+        slack.dm(current_user.slack_user_id,
+            text=f"Leave request withdrawn.",
+            blocks=[{"type": "section", "text": {"type": "mrkdwn",
+                "text": f":white_check_mark: Your *{type_label}* leave request ({date_str}) has been successfully withdrawn."
+            }}]
+        )
