@@ -130,11 +130,14 @@ function holidaysView(holidays) {
 // applicant  — BotUserResponse (the person whose leave it is)
 // stepLabel  — e.g. "Step 1 of 2" or "Single approval"
 // days       — number of working days
-function approverMessage(leave, applicant, stepLabel, days) {
+function approverMessage(leave, applicant, stepLabel, days, overLimit = false) {
   const dateStr = leave.start_date === leave.end_date
     ? leave.start_date
     : `${leave.start_date} → ${leave.end_date}`;
-  const typeLabel = leave.leave_type === 'wfh' ? 'WFH' : leave.leave_type.charAt(0).toUpperCase() + leave.leave_type.slice(1);
+  const typeLabel = leave.leave_type.charAt(0).toUpperCase() + leave.leave_type.slice(1);
+  const overLimitLine = overLimit
+    ? `\n⚠️ *This will exceed ${applicant.name}'s ${leave.leave_type} leave balance.*`
+    : '';
   return {
     text: `Leave request #${leave.id} from ${applicant.name}`,
     blocks: [
@@ -146,7 +149,8 @@ function approverMessage(leave, applicant, stepLabel, days) {
                 `*From:* ${applicant.name} (${applicant.role})\n` +
                 `*Type:* ${typeLabel}\n` +
                 `*Dates:* ${dateStr}  (*${days}* working day${days === 1 ? '' : 's'})\n` +
-                `*Note:* ${leave.note || '—'}`,
+                `*Note:* ${leave.note || '—'}` +
+                overLimitLine,
         },
       },
       {

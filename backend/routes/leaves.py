@@ -138,7 +138,15 @@ def get_my_leaves_as_manager(current_user: Annotated[User, Depends(get_current_u
         .all()
     )
 
-    return l1_pending + l2_pending
+    def with_over_limit(leave: Leave) -> LeaveResponse:
+        r = LeaveResponse.model_validate(leave)
+        d = count_weekdays(leave.start_date, leave.end_date)
+        lim = LEAVE_LIMITS.get(str(leave.leave_type), 0)
+        taken = leave.user.sick_leaves_taken if leave.leave_type == LeaveType.sick else leave.user.casual_leaves_taken
+        r.over_limit = (taken + d) > lim
+        return r
+
+    return [with_over_limit(l) for l in l1_pending + l2_pending]
 
 
 @router.post("", response_model=LeaveResponse)
@@ -165,6 +173,12 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
             earliest = today + timedelta(days=min_advance)
             raise HTTPException(status_code=422,
                 detail=f"Casual leave ({label}) needs {min_advance} day(s) advance notice. Earliest start: {earliest}.")
+    # Check balance before any modification
+    days = count_weekdays(leave.start_date, effective_end)
+    limit = LEAVE_LIMITS.get(str(leave.leave_type), 0)
+    current_taken = current_user.sick_leaves_taken if leave.leave_type == LeaveType.sick else current_user.casual_leaves_taken
+    over_limit = (current_taken + days) > limit
+
     # L2 leads (no manager) are auto-approved for all leave types
     auto_approve = leave.leave_type == LeaveType.sick or not current_user.manager
     new_leave = Leave(
@@ -179,7 +193,6 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
     db.add(new_leave)
     db.flush()  # populate new_leave.id before Slack messages
     if auto_approve:
-        days = count_weekdays(leave.start_date, effective_end)
         if leave.leave_type == LeaveType.sick:
             current_user.sick_leaves_taken += days
         elif leave.leave_type == LeaveType.casual:
@@ -194,7 +207,6 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
                     "text": f":white_check_mark: *Leave #{new_leave.id} auto-approved & logged.*\n"
                             f"_{type_label} · {date_str} · {days} working {day_word}._"}}])
     else:
-        days = count_weekdays(new_leave.start_date, new_leave.end_date)
         day_word = "day" if days == 1 else "days"
         date_str = str(new_leave.start_date) if new_leave.start_date == new_leave.end_date else f"{new_leave.start_date} → {new_leave.end_date}"
         l1 = current_user.manager
@@ -209,13 +221,15 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
                             f"Awaiting approval from {awaiting}"}}])
         if l1 and l1.slack_user_id:
             step = "Single approval" if not l1.manager_id else "Step 1 of 2"
-            msg = slack.dm(l1.slack_user_id, **slack.approver_payload(new_leave, current_user, step, days))
+            msg = slack.dm(l1.slack_user_id, **slack.approver_payload(new_leave, current_user, step, days, over_limit))
             if msg:
                 new_leave.slack_l1_channel = msg["channel"]
                 new_leave.slack_l1_ts = msg["ts"]
     db.commit()
     db.refresh(new_leave)
-    return new_leave
+    response = LeaveResponse.model_validate(new_leave)
+    response.over_limit = over_limit
+    return response
 
 
 @router.patch("/{leave_id}/approve", response_model=LeaveResponse)

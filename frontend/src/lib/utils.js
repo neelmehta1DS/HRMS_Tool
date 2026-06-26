@@ -69,6 +69,20 @@ export function getDefaultETA() {
   return d.toTimeString().slice(0, 5);
 }
 
+export function countBusinessDays(startStr, endStr, holidays = []) {
+  const holidaySet = new Set(holidays.map(h => h.date));
+  let count = 0;
+  let d = new Date(startStr + "T00:00:00");
+  const end = new Date(endStr + "T00:00:00");
+  while (d <= end) {
+    const dow = d.getDay();
+    const iso = d.toISOString().slice(0, 10);
+    if (dow !== 0 && dow !== 6 && !holidaySet.has(iso)) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
 export function countDays(startDate, endDate) {
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");

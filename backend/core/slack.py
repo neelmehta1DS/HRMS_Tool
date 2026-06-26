@@ -48,7 +48,7 @@ def delete_msg(channel: Optional[str], ts: Optional[str]) -> None:
         print(f"[slack delete error] {e.response['error']}")
 
 
-def approver_payload(leave, user, step_label: str, days: int) -> dict:
+def approver_payload(leave, user, step_label: str, days: int, over_limit: bool = False) -> dict:
     """Build the chat_postMessage kwargs for a manager approval request DM."""
     date_str = (
         str(leave.start_date)
@@ -57,12 +57,14 @@ def approver_payload(leave, user, step_label: str, days: int) -> dict:
     )
     type_label = str(leave.leave_type).capitalize()
     day_word = "day" if days == 1 else "days"
+    over_limit_line = f"\n⚠️ *This will exceed {user.name}'s {type_label.lower()} leave balance.*" if over_limit else ""
     text = (
         f"*Leave request* `#{leave.id}`  ·  _{step_label}_\n"
         f"*From:* {user.name} ({user.role})\n"
         f"*Type:* {type_label}\n"
         f"*Dates:* {date_str}  (*{days}* working {day_word})\n"
         f"*Note:* {leave.note or '—'}"
+        f"{over_limit_line}"
     )
     return {
         "text": f"Leave request #{leave.id} from {user.name}",

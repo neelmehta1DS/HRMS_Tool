@@ -171,8 +171,11 @@ app.view('leave_apply_submit', async ({ ack, body, view, client }) => {
   // DM L1 manager
   if (user.l1_manager?.slack_user_id) {
     const stepLabel = user.l2_manager ? 'Step 1 of 2' : 'Single approval';
+    const taken = leave_type === 'sick' ? user.sick_taken : user.casual_taken;
+    const limit = TOTALS[leave_type] || 0;
+    const overLimit = (taken + days) > limit;
     const l1Msg = await dm(client, user.l1_manager.slack_user_id,
-      V.approverMessage(leave, user, stepLabel, days));
+      V.approverMessage(leave, user, stepLabel, days, overLimit));
     if (l1Msg?.ts) {
       await api.setLeaveMessage(leave.id, 'l1', l1Msg.channel, l1Msg.ts).catch(() => {});
     }

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Plus, X, CalendarDays, PartyPopper, Trash2 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import Avatar from "../components/ui/Avatar";
-import { formatDate, getLeaveStatus, isIC, isL1, isL2 } from "../lib/utils";
+import { formatDate, getLeaveStatus, isIC, isL1, isL2, countBusinessDays } from "../lib/utils";
 import { createLeave, approveLeave, rejectLeave, deleteLeave, getManagerLeaves, getMyBalance, getHolidays, getLeaveLimits } from "../lib/api";
 
 function LeavePieCard({ label, used, total, color }) {
@@ -70,11 +70,14 @@ function ApprovalCard({ leave, onApprove, onReject }) {
     <div className="bg-white rounded-xl border border-slate-100 p-5 flex items-start gap-4">
       <Avatar name={leave.user?.name || "?"} size="lg" />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
           <p className="font-semibold text-sm text-slate-800">{leave.user?.name}</p>
           <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-500 capitalize">{leave.leave_type}</span>
           {status === "pending_l2" && (
             <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-600">Needs L2</span>
+          )}
+          {leave.over_limit && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-50 text-amber-600">⚠ Over balance</span>
           )}
         </div>
         <p className="text-xs text-slate-400">
@@ -213,14 +216,30 @@ function validateLeaveForm(form) {
   return null;
 }
 
-function RequestLeaveModal({ onClose, onSuccess, isLogOnly }) {
+function RequestLeaveModal({ onClose, onSuccess, isLogOnly, balance, limits, holidays }) {
   const [form, setForm] = useState({ leave_type: "casual", start_date: "", end_date: "", note: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [overLimitWarning, setOverLimitWarning] = useState(null);
 
-  async function submit() {
+  async function submit(force = false) {
     const validationError = validateLeaveForm(form);
     if (validationError) { setError(validationError); return; }
+
+    if (!force && balance && limits) {
+      const start = form.start_date;
+      const end = form.end_date || start;
+      const days = countBusinessDays(start, end, holidays);
+      const taken = form.leave_type === "sick" ? balance.sick_taken : balance.casual_taken;
+      const limit = form.leave_type === "sick" ? limits.sick : limits.casual;
+      const remaining = Math.max(limit - taken, 0);
+      if (days > remaining) {
+        setOverLimitWarning(`This leave uses ${days} working day${days !== 1 ? "s" : ""} but you only have ${remaining} remaining. Submit anyway?`);
+        return;
+      }
+    }
+
+    setOverLimitWarning(null);
     setSubmitting(true);
     setError("");
     try {
@@ -280,6 +299,22 @@ function RequestLeaveModal({ onClose, onSuccess, isLogOnly }) {
               placeholder="Any additional details…" rows={3}
               className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none placeholder:text-slate-300" />
           </div>
+          {overLimitWarning && (
+            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
+              <p className="text-xs font-semibold text-amber-700 mb-2">⚠ Over balance</p>
+              <p className="text-xs text-amber-700 mb-3">{overLimitWarning}</p>
+              <div className="flex gap-2">
+                <button onClick={() => setOverLimitWarning(null)}
+                  className="flex-1 py-2 text-xs font-semibold rounded-lg bg-white border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors">
+                  Go back
+                </button>
+                <button onClick={() => submit(true)} disabled={submitting}
+                  className="flex-1 py-2 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-colors">
+                  {submitting ? "Submitting…" : "Submit anyway"}
+                </button>
+              </div>
+            </div>
+          )}
           {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
         <div className="flex gap-2 px-6 pb-6">
@@ -287,7 +322,7 @@ function RequestLeaveModal({ onClose, onSuccess, isLogOnly }) {
             className="flex-1 py-3 text-sm font-semibold rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
             Cancel
           </button>
-          <button onClick={submit} disabled={submitting}
+          <button onClick={() => submit(false)} disabled={submitting || !!overLimitWarning}
             className="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl transition-colors">
             {submitting ? "Submitting…" : (isLogOnly ? "Log leave" : "Submit request")}
           </button>
@@ -548,6 +583,9 @@ export default function Leaves({ currentUser, myLeaves, onRefresh }) {
           onClose={() => setShowModal(false)}
           onSuccess={() => { onRefresh(); if (!isLogOnly) getMyBalance().then(setBalance).catch(() => {}); }}
           isLogOnly={isLogOnly}
+          balance={balance}
+          limits={limits}
+          holidays={holidays}
         />
       )}
     </div>

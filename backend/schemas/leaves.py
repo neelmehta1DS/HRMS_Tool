@@ -29,6 +29,7 @@ class LeaveResponse(LeaveBase):
     approved_by_l1: Optional[bool] = None
     approved_by_l2: Optional[bool] = None
     rejection_note: Optional[str] = None
+    over_limit: bool = False
 
     created_at: datetime
 
