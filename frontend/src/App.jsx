@@ -109,7 +109,6 @@ export default function App() {
             currentUser={currentUser}
             users={users}
             teamLeavesData={teamLeavesData}
-            catchups={allCatchups}
             onUserUpdate={handleUserUpdate}
           />
         )}

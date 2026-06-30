@@ -1,11 +1,12 @@
 from typing import Annotated
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from core.security import get_current_user
 from db.database import get_db
+from services.google_calendar import create_meeting_for_catchup
 
 from schemas.catchups import CatchupCreate, CatchupResponse
 from models.catchups import Catchup
@@ -49,7 +50,7 @@ def get_my_catchups_as_manager(current_user: Annotated[User, Depends(get_current
 
 
 @router.post("", response_model=CatchupResponse)
-def create_catchup(catchup: CatchupCreate, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def create_catchup(catchup: CatchupCreate, background_tasks: BackgroundTasks, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
     employee = db.query(User).filter(User.id == catchup.employee_id).first()
     if not employee:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -62,17 +63,30 @@ def create_catchup(catchup: CatchupCreate, current_user: Annotated[User, Depends
 
     # The other manager in the chain becomes the alternate (may be None if no L2 above direct manager)
     alternate_manager_id = (employee.manager.manager_id if is_direct_manager else employee.manager_id)
+    alternate_manager = db.query(User).filter(User.id == alternate_manager_id).first() if alternate_manager_id else None
 
     new_catchup = Catchup(
         manager_id=current_user.id,
         alternate_manager_id=alternate_manager_id,
         employee_id=catchup.employee_id,
-        notes_doc_link="dummy_link",
-        meeting_link="dummy_link",
+        notes_doc_link="",
+        meeting_link="",
         date_and_time=catchup.date_and_time,
     )
 
     db.add(new_catchup)
     db.commit()
     db.refresh(new_catchup)
+
+    if current_user.refresh_token:
+        background_tasks.add_task(
+            create_meeting_for_catchup,
+            catchup_id=new_catchup.id,
+            manager_refresh_token=current_user.refresh_token,
+            employee_name=employee.name,
+            employee_email=employee.email,
+            alternate_manager_email=alternate_manager.email if alternate_manager else None,
+            date_and_time=catchup.date_and_time,
+        )
+
     return new_catchup

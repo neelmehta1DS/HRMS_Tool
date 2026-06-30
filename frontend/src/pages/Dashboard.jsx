@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Clock, Calendar, CalendarDays, Users2, X } from "lucide-react";
+import { Clock, Calendar, CalendarDays, X } from "lucide-react";
 import Avatar from "../components/ui/Avatar";
 import { getGreeting, formatDateShort, getDefaultETA } from "../lib/utils";
 import { updateStatus } from "../lib/api";
@@ -104,7 +104,7 @@ function getStatusBadges(user) {
   return badges;
 }
 
-export default function Dashboard({ currentUser, users, teamLeavesData, catchups, onUserUpdate }) {
+export default function Dashboard({ currentUser, users, teamLeavesData, onUserUpdate }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [calendarFor, setCalendarFor] = useState(null);
 
@@ -249,10 +249,6 @@ export default function Dashboard({ currentUser, users, teamLeavesData, catchups
             const onLeaveLeave = isOnLeaveToday
               ? teamLeavesData.current.find(l => l.user?.id === member.id)
               : null;
-            const nextCatchup = catchups
-              .filter(c => c.employee_id === member.id && new Date(c.date_and_time) > new Date())
-              .sort((a,b) => a.date_and_time.localeCompare(b.date_and_time))[0];
-
             return (
               <div key={member.id}
                 className={`bg-white rounded-xl border p-4 hover:shadow-md transition-all ${isMe ? "border-blue-200 ring-1 ring-blue-100" : "border-slate-100"}`}>
@@ -273,15 +269,14 @@ export default function Dashboard({ currentUser, users, teamLeavesData, catchups
                 </div>
 
                 <div className="flex flex-wrap gap-1 mb-3 min-h-[20px]">
-                  {(() => {
-                    const allBadges = [...badges];
-                    if (isOnLeaveToday) allBadges.push({ label: "On Leave", color: "bg-violet-100 text-violet-700" });
-                    return allBadges.length === 0
+                  {isOnLeaveToday
+                    ? <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">On Leave</span>
+                    : badges.length === 0
                       ? <span className="text-[11px] text-slate-300">No status set</span>
-                      : allBadges.map((b, i) => (
+                      : badges.map((b, i) => (
                           <span key={i} className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${b.color}`}>{b.label}</span>
-                        ));
-                  })()}
+                        ))
+                  }
                 </div>
 
                 {onLeaveLeave && (
@@ -293,14 +288,6 @@ export default function Dashboard({ currentUser, users, teamLeavesData, catchups
                   </div>
                 )}
 
-                {nextCatchup && (
-                  <div className="flex items-center gap-1.5">
-                    <Users2 className="w-3 h-3 flex-shrink-0 text-slate-300" />
-                    <span className="text-[11px] text-slate-400">
-                      Next catch-up: {formatDateShort(nextCatchup.date_and_time.slice(0,10))}
-                    </span>
-                  </div>
-                )}
               </div>
             );
           })}

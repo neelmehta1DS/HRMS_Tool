@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, X, Bell, FileText } from "lucide-react";
+import { Plus, X, Bell, FileText, Video } from "lucide-react";
 import Avatar from "../components/ui/Avatar";
 import { formatDate, isIC, isL1, isL2 } from "../lib/utils";
 import { createCatchup } from "../lib/api";
@@ -30,10 +30,18 @@ function CatchupCard({ catchup, users }) {
         </p>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <a href={catchup.notes_doc_link} target="_blank" rel="noreferrer"
-          className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700">
-          <FileText className="w-3 h-3" /> Notes
-        </a>
+        {catchup.notes_doc_link && (
+          <a href={catchup.notes_doc_link} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700">
+            <FileText className="w-3 h-3" /> Notes
+          </a>
+        )}
+        {catchup.meeting_link && (
+          <a href={catchup.meeting_link} target="_blank" rel="noreferrer"
+            className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 hover:text-emerald-700">
+            <Video className="w-3 h-3" /> Join
+          </a>
+        )}
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${meta.badge}`}>{meta.label}</span>
       </div>
     </div>
