@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import time
+from datetime import date, time
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -35,6 +35,9 @@ class UserResponse(BaseModel):
 
     sick_leaves_taken: int = 0
     casual_leaves_taken: int = 0
+
+    birthday: Optional[date] = None
+    joining_date: Optional[date] = None
 
     model_config = ConfigDict(from_attributes=True)
 

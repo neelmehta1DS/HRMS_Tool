@@ -1,10 +1,10 @@
 from __future__ import annotations
-from datetime import datetime, time
+from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Optional
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Time, DateTime, Enum, ForeignKey, func
+from sqlalchemy import Date, Time, DateTime, Enum, ForeignKey, func
 from db.database import Base
 
 
@@ -43,5 +43,8 @@ class User(Base):
     # Leave balances (weekdays only)
     sick_leaves_taken: Mapped[int] = mapped_column(default=0)
     casual_leaves_taken: Mapped[int] = mapped_column(default=0)
+
+    birthday: Mapped[Optional[date]] = mapped_column(Date, default=None)
+    joining_date: Mapped[Optional[date]] = mapped_column(Date, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

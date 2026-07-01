@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from core.security import get_current_user
 from db.database import get_db
-from services.google_calendar import create_meeting_for_catchup
+from services.catchup_resources import create_catchup_resources
 
 from schemas.catchups import CatchupCreate, CatchupResponse
 from models.catchups import Catchup
@@ -78,14 +78,30 @@ def create_catchup(catchup: CatchupCreate, background_tasks: BackgroundTasks, cu
     db.commit()
     db.refresh(new_catchup)
 
-    if current_user.refresh_token:
+    # L2 owns the Google Doc — determine who that is.
+    l2 = current_user if is_skip_manager else alternate_manager
+
+    # Collect everyone who needs doc access, excluding the L2 (they already own the file).
+    share_emails = list({
+        email for email in [
+            current_user.email,
+            alternate_manager.email if alternate_manager else None,
+            employee.email,
+        ]
+        if email and email != (l2.email if l2 else None)
+    })
+
+    if current_user.refresh_token or (l2 and l2.refresh_token):
         background_tasks.add_task(
-            create_meeting_for_catchup,
+            create_catchup_resources,
             catchup_id=new_catchup.id,
             manager_refresh_token=current_user.refresh_token,
+            l2_refresh_token=l2.refresh_token if l2 else None,
             employee_name=employee.name,
             employee_email=employee.email,
+            manager_name=current_user.name,
             alternate_manager_email=alternate_manager.email if alternate_manager else None,
+            emails_to_share=share_emails,
             date_and_time=catchup.date_and_time,
         )
 

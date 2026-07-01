@@ -1,5 +1,4 @@
 import logging
-import time
 from datetime import timedelta
 from typing import Optional
 
@@ -7,13 +6,10 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 from core.config import settings
-from db.database import SessionLocal
-from models.catchups import Catchup
 
 logger = logging.getLogger(__name__)
 
 _CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
-_RETRY_DELAYS = [0, 1, 2]  # seconds before each attempt
 
 
 def _build_credentials(refresh_token: str) -> Credentials:
@@ -28,16 +24,14 @@ def _build_credentials(refresh_token: str) -> Credentials:
 
 
 def _create_calendar_event(
-    refresh_token: str,
+    service,
     catchup_id: int,
     employee_name: str,
     employee_email: str,
     alternate_manager_email: Optional[str],
     date_and_time,
-) -> str:
-    creds = _build_credentials(refresh_token)
-    service = build("calendar", "v3", credentials=creds)
-
+) -> tuple[str, str]:
+    """Creates a Google Calendar event with a Meet link. Returns (meet_link, event_id)."""
     attendees = [{"email": employee_email}]
     if alternate_manager_email:
         attendees.append({"email": alternate_manager_email})
@@ -67,50 +61,5 @@ def _create_calendar_event(
     link = result.get("hangoutLink")
     if not link:
         raise RuntimeError(f"Google Calendar event created but no Meet link returned (event id: {result.get('id')})")
-    return link
 
-
-def create_meeting_for_catchup(
-    catchup_id: int,
-    manager_refresh_token: str,
-    employee_name: str,
-    employee_email: str,
-    alternate_manager_email: Optional[str],
-    date_and_time,
-) -> None:
-    last_error: Optional[Exception] = None
-
-    for delay in _RETRY_DELAYS:
-        if delay:
-            time.sleep(delay)
-        try:
-            meeting_link = _create_calendar_event(
-                refresh_token=manager_refresh_token,
-                catchup_id=catchup_id,
-                employee_name=employee_name,
-                employee_email=employee_email,
-                alternate_manager_email=alternate_manager_email,
-                date_and_time=date_and_time,
-            )
-
-            db = SessionLocal()
-            try:
-                catchup = db.query(Catchup).filter(Catchup.id == catchup_id).first()
-                if catchup:
-                    catchup.meeting_link = meeting_link
-                    db.commit()
-            finally:
-                db.close()
-
-            return
-
-        except Exception as e:
-            last_error = e
-
-    logger.error(
-        "Failed to create Google Meet for catchup %d after %d attempts: %s",
-        catchup_id,
-        len(_RETRY_DELAYS),
-        last_error,
-        exc_info=True,
-    )
+    return link, result["id"]
