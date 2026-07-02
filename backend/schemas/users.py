@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models.users import RoleLevel
+from models.users import RoleLevel, OfficeStatus
 
 
 class ManagerInfo(BaseModel):
@@ -28,8 +28,7 @@ class UserResponse(BaseModel):
 
     slack_user_id: Optional[str] = None
 
-    in_office: bool
-    wfh: bool
+    office_status: OfficeStatus
     late_arrive_eta: Optional[time] = None
     early_exit_eta: Optional[time] = None
 
@@ -42,7 +41,6 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class UserStatusUpdate(BaseModel):
-    in_office: Optional[bool] = None
-    wfh: Optional[bool] = None
+    office_status: Optional[OfficeStatus] = None
     late_arrive_eta: Optional[time] = None
     early_exit_eta: Optional[time] = None

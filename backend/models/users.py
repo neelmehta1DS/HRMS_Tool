@@ -14,6 +14,12 @@ class RoleLevel(StrEnum):
     l2_lead = "l2_lead"
 
 
+class OfficeStatus(StrEnum):
+    IN = "IN"
+    OUT = "OUT"
+    WFH = "WFH"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -35,14 +41,15 @@ class User(Base):
     slack_user_id: Mapped[Optional[str]] = mapped_column(unique=True, default=None)
 
     # Live status
-    in_office: Mapped[bool] = mapped_column(default=False)
-    wfh: Mapped[bool] = mapped_column(default=False)
+    office_status: Mapped[OfficeStatus] = mapped_column(Enum(OfficeStatus), default=OfficeStatus.OUT)
     late_arrive_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
     early_exit_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
 
     # Leave balances (weekdays only)
     sick_leaves_taken: Mapped[int] = mapped_column(default=0)
     casual_leaves_taken: Mapped[int] = mapped_column(default=0)
+
+    is_admin: Mapped[bool] = mapped_column(default=False)
 
     birthday: Mapped[Optional[date]] = mapped_column(Date, default=None)
     joining_date: Mapped[Optional[date]] = mapped_column(Date, default=None)

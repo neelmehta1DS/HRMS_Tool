@@ -1,7 +1,7 @@
 from datetime import date
 
 from sqlalchemy.orm import Session
-from models.users import User, RoleLevel
+from models.users import User, RoleLevel, OfficeStatus
 
 
 # -------------------------------------------------
@@ -38,14 +38,15 @@ def seed_users(db: Session):
     # L2 LEADS
     # =========================
     ad = upsert_user(db, {
-        "email": "adithya@1digitalstack.ai",
+        "email": "adithya1@1digitalstack.ai",
         "name": "AD",
         "role": "Product Lead",
         "role_level": RoleLevel.l2_lead,
         "manager_id": None,
+        "is_admin": True,
         "refresh_token": "dummy string",
         "slack_user_id": "U08NGTQRXBL",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1990, 3, 15),
         "joining_date": date(2019, 6, 1),
     })
@@ -58,7 +59,7 @@ def seed_users(db: Session):
         "manager_id": None,
         "refresh_token": "dummy string",
         "slack_user_id": "U01RQ34K9B4",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1988, 11, 22),
         "joining_date": date(2018, 4, 10),
     })
@@ -74,7 +75,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U094ARA7RFA",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1995, 7, 4),
         "joining_date": date(2021, 9, 15),
     })
@@ -87,7 +88,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U09JW1R9GJW",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1996, 1, 28),
         "joining_date": date(2022, 3, 7),
     })
@@ -100,7 +101,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0ADUL97P8F",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1994, 5, 19),
         "joining_date": date(2021, 1, 11),
     })
@@ -113,7 +114,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0AGTCNJ8AD",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1993, 8, 30),
         "joining_date": date(2020, 7, 20),
     })
@@ -126,7 +127,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0228BG7AGL",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1997, 2, 14),
         "joining_date": date(2022, 8, 1),
     })
@@ -139,7 +140,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U035S8Z1Z1N",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1991, 10, 5),
         "joining_date": date(2020, 2, 17),
     })
@@ -152,7 +153,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0A6D61AT1C",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1992, 12, 9),
         "joining_date": date(2021, 5, 3),
     })
@@ -165,7 +166,7 @@ def seed_users(db: Session):
         "manager_id": ad.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U035TALQ57X",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1990, 6, 25),
         "joining_date": date(2019, 11, 18),
     })
@@ -181,7 +182,7 @@ def seed_users(db: Session):
         "manager_id": nijo.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U09CNE6FZFA",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1999, 4, 12),
         "joining_date": date(2023, 1, 23),
     })
@@ -194,7 +195,7 @@ def seed_users(db: Session):
         "manager_id": nijo.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0ATS4VCXMH",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1998, 9, 3),
         "joining_date": date(2023, 6, 12),
     })
@@ -207,7 +208,7 @@ def seed_users(db: Session):
         "manager_id": vaheed.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U07S9U441FU",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(2000, 7, 17),
         "joining_date": date(2024, 2, 5),
     })
@@ -220,7 +221,7 @@ def seed_users(db: Session):
         "manager_id": vaheed.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0AQYLZS42J",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1997, 11, 21),
         "joining_date": date(2022, 10, 10),
     })
@@ -229,11 +230,24 @@ def seed_users(db: Session):
         "email": "neel.mehta@1digitalstack.ai",
         "name": "Neel Mehta",
         "role": "",
-        "role_level": RoleLevel.ic,
-        "manager_id": siya.id,
+        "role_level": RoleLevel.l2_lead,
+        "manager_id": None,
         "refresh_token": "",
         "slack_user_id": "U0B8UBBTPRT",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
+        "birthday": date(2006, 8, 3),
+        "joining_date": date(2025, 1, 6),
+    })
+
+    Vir = upsert_user(db, {
+        "email": "vir.dang@1digitalstack.ai",
+        "name": "Vir Dang",
+        "role": "",
+        "role_level": RoleLevel.ic,
+        "manager_id": Neel.id,
+        "refresh_token": "",
+        "slack_user_id": "Nothing",
+        "office_status": OfficeStatus.IN,
         "birthday": date(2003, 7, 3),
         "joining_date": date(2025, 1, 6),
     })
@@ -249,7 +263,7 @@ def seed_users(db: Session):
         "manager_id": abhi.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U0A0TRC1XUL",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1996, 3, 8),
         "joining_date": date(2022, 7, 4),
     })
@@ -262,7 +276,7 @@ def seed_users(db: Session):
         "manager_id": abhi.id,
         "refresh_token": "dummy string",
         "slack_user_id": "U04JP86DPMW",
-        "in_office": True,
+        "office_status": OfficeStatus.IN,
         "birthday": date(1995, 6, 16),
         "joining_date": date(2021, 12, 1),
     })

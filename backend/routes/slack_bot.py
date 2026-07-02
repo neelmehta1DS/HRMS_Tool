@@ -238,7 +238,7 @@ def get_team_availability(
     available = [
         {
             "name": u.name,
-            "status": "WFH" if u.wfh else ("In Office" if u.in_office else "Out of Office"),
+            "status": "WFH" if u.office_status == "WFH" else ("In Office" if u.office_status == "IN" else "Out of Office"),
         }
         for u in all_users if u.id not in on_leave_user_ids
     ]

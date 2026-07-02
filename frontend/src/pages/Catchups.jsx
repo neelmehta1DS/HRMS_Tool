@@ -1,234 +1,711 @@
-import { useState } from "react";
-import { Plus, X, Bell, FileText, Video } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Plus, Calendar, Clock, Trash2, Pencil } from "lucide-react";
+
+function GoogleDocsIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" fill="#4285F4" />
+      <path d="M14 2v6h6" fill="#A8C7FA" />
+      <line x1="8" y1="13" x2="16" y2="13" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="8" y1="16.5" x2="16" y2="16.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="8" y1="9.5" x2="12" y2="9.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function GoogleMeetIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect x="2" y="6" width="13" height="12" rx="2" fill="#FBBC04" />
+      <path d="M15 10.2L22 7v10l-7-3.2V10.2z" fill="#FBBC04" />
+    </svg>
+  );
+}
+import { useUser } from "../contexts/UserContext";
+import { getMyCatchups, getManagerCatchups, getUsers, createCatchup, updateCatchup, deleteCatchup } from "../lib/api";
+import { formatDateTime, isManager } from "../lib/utils";
 import Avatar from "../components/ui/Avatar";
-import { formatDate, isIC, isL1, isL2 } from "../lib/utils";
-import { createCatchup } from "../lib/api";
+import Button from "../components/ui/Button";
+import Modal from "../components/ui/Modal";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import Spinner from "../components/ui/Spinner";
+import TimePicker from "../components/ui/TimePicker";
 
-function getCatchupStatus(catchup) {
-  return new Date(catchup.date_and_time) > new Date() ? "scheduled" : "completed";
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function SectionHeader({ title, count }) {
+  return (
+    <div className="flex items-center gap-2.5 mb-4">
+      <span className="text-[13px] font-semibold text-slate-500 uppercase tracking-wider">
+        {title}
+      </span>
+      <span className="text-[11px] font-semibold bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full">
+        {count}
+      </span>
+    </div>
+  );
 }
 
-function statusMeta(status) {
-  if (status === "completed") return { label: "Completed", badge: "bg-emerald-50 text-emerald-600" };
-  if (status === "missed")    return { label: "Missed",    badge: "bg-red-50 text-red-500" };
-  return                             { label: "Scheduled", badge: "bg-blue-50 text-blue-600" };
+function EmptyState({ icon: Icon, message }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-8 gap-2">
+      <Icon size={24} className="text-slate-300" />
+      <p className="text-[13px] text-slate-400">{message}</p>
+    </div>
+  );
 }
 
-function CatchupCard({ catchup, users }) {
-  const member = users.find(u => u.id === catchup.employee_id);
-  const name = member?.name || `User ${catchup.employee_id}`;
-  const status = getCatchupStatus(catchup);
-  const meta = statusMeta(status);
+function CatchupCard({ catchup, viewMode, users, isPrevious, currentUserId, onDelete, onEdit }) {
+  const personName =
+    viewMode === "manager"
+      ? (users.find((u) => u.id === catchup.employee_id)?.name ?? "Team Member")
+      : `Catchup with ${catchup.manager?.name ?? "Manager"}`;
+
+  const avatarName =
+    viewMode === "manager"
+      ? (users.find((u) => u.id === catchup.employee_id)?.name ?? "Team Member")
+      : (catchup.manager?.name ?? "Manager");
+
+  const canManage = currentUserId === catchup.manager_id || currentUserId === catchup.alternate_manager_id;
+
+  const hasNotes = catchup.notes_doc_link && catchup.notes_doc_link !== "";
+  const hasMeeting = catchup.meeting_link && catchup.meeting_link !== "";
+  const done = catchup.background_creation_finished;
+
+  const dateBadgeClass = isPrevious
+    ? "text-[11px] font-medium bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg whitespace-nowrap"
+    : "text-[11px] font-medium bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg whitespace-nowrap";
 
   return (
-    <div className="bg-white rounded-xl border border-slate-100 p-4 flex items-center gap-3">
-      <Avatar name={name} size="md" />
+    <div
+      className={`bg-white rounded-xl border border-slate-200 p-4 flex items-start gap-4 ${
+        isPrevious ? "opacity-80" : ""
+      }`}
+    >
+      <Avatar name={avatarName} size="md" />
+
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-slate-800">{name}</p>
-        <p className="text-xs text-slate-400">
-          {formatDate(catchup.date_and_time.slice(0,10))} · {catchup.date_and_time.slice(11,16)}
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-[14px] font-semibold text-slate-900 truncate">
+            {personName}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isPrevious && (
+              <span className="text-[11px] font-medium bg-slate-100 text-slate-500 px-2.5 py-1 rounded-lg">
+                Completed
+              </span>
+            )}
+            <span className={dateBadgeClass}>
+              {new Date(catchup.date_and_time).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+            {canManage && (
+              <>
+                <button
+                  onClick={() => onEdit(catchup)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                  title="Edit"
+                >
+                  <Pencil size={14} strokeWidth={2} />
+                </button>
+                <button
+                  onClick={() => onDelete(catchup.id)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 size={14} strokeWidth={2} />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <p className="text-[13px] text-slate-500 mt-0.5">
+          {formatDateTime(catchup.date_and_time)}
         </p>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {catchup.notes_doc_link && (
-          <a href={catchup.notes_doc_link} target="_blank" rel="noreferrer"
-            className="flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700">
-            <FileText className="w-3 h-3" /> Notes
-          </a>
-        )}
-        {catchup.meeting_link && (
-          <a href={catchup.meeting_link} target="_blank" rel="noreferrer"
-            className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 hover:text-emerald-700">
-            <Video className="w-3 h-3" /> Join
-          </a>
-        )}
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${meta.badge}`}>{meta.label}</span>
+
+        <div className="flex items-center gap-3 mt-2">
+          {hasNotes && hasMeeting ? (
+            <>
+              <a
+                href={catchup.notes_doc_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] text-[#4285F4] hover:text-[#1a56db] transition-colors"
+              >
+                <GoogleDocsIcon />
+                Notes
+              </a>
+              <span className="text-slate-300 text-[12px]">·</span>
+              <a
+                href={catchup.meeting_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] text-slate-600 hover:text-slate-900 transition-colors"
+              >
+                <GoogleMeetIcon />
+                Join Meeting
+              </a>
+            </>
+          ) : hasNotes ? (
+            <>
+              <a
+                href={catchup.notes_doc_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] text-[#4285F4] hover:text-[#1a56db] transition-colors"
+              >
+                <GoogleDocsIcon />
+                Notes
+              </a>
+              <span className="text-slate-300 text-[12px]">·</span>
+              {done
+                ? <span className="text-[12px] text-red-400">Meeting creation failed</span>
+                : <span className="text-[12px] text-slate-400">Meeting link being prepared...</span>
+              }
+            </>
+          ) : hasMeeting ? (
+            <>
+              {done
+                ? <span className="text-[12px] text-red-400">Doc creation failed</span>
+                : <span className="text-[12px] text-slate-400">Doc being prepared...</span>
+              }
+              <span className="text-slate-300 text-[12px]">·</span>
+              <a
+                href={catchup.meeting_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-[12px] text-slate-600 hover:text-slate-900 transition-colors"
+              >
+                <GoogleMeetIcon />
+                Join Meeting
+              </a>
+            </>
+          ) : done ? (
+            <span className="text-[12px] text-red-400">
+              Failed to create doc &amp; meeting
+            </span>
+          ) : (
+            <span className="text-[12px] text-slate-400">
+              Doc &amp; meeting link being prepared...
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function CreateCatchupModal({ users, currentUser, onClose, onSuccess }) {
-  const [form, setForm] = useState({ employee_id: "", date: "", time: "15:00" });
+function CatchupList({ catchups, viewMode, users, isPrevious, currentUserId, onDelete, onEdit }) {
+  if (!catchups || catchups.length === 0) {
+    return isPrevious ? (
+      <EmptyState icon={Clock} message="No previous catchups yet" />
+    ) : (
+      <EmptyState icon={Calendar} message="No upcoming catchups" />
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {catchups.map((c) => (
+        <CatchupCard
+          key={c.id}
+          catchup={c}
+          viewMode={viewMode}
+          users={users}
+          isPrevious={isPrevious}
+          currentUserId={currentUserId}
+          onDelete={onDelete}
+          onEdit={onEdit}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Schedule Modal ──────────────────────────────────────────────────────────
+
+function ScheduleModal({ open, onClose, users, currentUser, onSuccess }) {
+  const [employeeId, setEmployeeId] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("10:00");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // Only show direct reports and skip-level reports (backend enforces the same check)
-  const eligible = users.filter(u => {
-    if (u.id === currentUser.id) return false;
-    if (u.manager_id === currentUser.id) return true;
-    const mgr = users.find(m => m.id === u.manager_id);
-    return mgr?.manager_id === currentUser.id;
-  });
+  const directReports = users.filter((u) => u.manager_id === currentUser.id);
+  const skipReports = users.filter(
+    (u) => u.manager?.manager?.id === currentUser.id
+  );
+  const directIds = new Set(directReports.map((d) => d.id));
+  const skipOnly = skipReports.filter((s) => !directIds.has(s.id));
 
-  async function submit() {
-    if (!form.employee_id || !form.date) return;
-    setSubmitting(true);
+  const minDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+  function handleClose() {
+    setEmployeeId("");
+    setDate("");
+    setTime("10:00");
     setError("");
+    onClose();
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+
+    if (!employeeId) {
+      setError("Please select a team member.");
+      return;
+    }
+    if (!date || date < minDate) {
+      setError("Please select a future date.");
+      return;
+    }
+    const dateAndTime = `${date}T${time}:00`;
+    setSubmitting(true);
     try {
-      await createCatchup({
-        employee_id: parseInt(form.employee_id),
-        date_and_time: `${form.date}T${form.time}:00`,
-      });
+      await createCatchup({ employee_id: parseInt(employeeId, 10), date_and_time: dateAndTime });
+      handleClose();
       onSuccess();
-      onClose();
-    } catch (e) {
-      setError(e.response?.data?.detail || "Failed to create catch-up");
+    } catch (err) {
+      setError(
+        err?.response?.data?.detail ?? "Failed to schedule catchup. Please try again."
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">Create catch-up</h3>
-          <button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
+    <Modal open={open} onClose={handleClose} title="Schedule Catchup" size="md">
+      <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+        <div className="space-y-1.5">
+          <label className="block text-[13px] font-medium text-slate-700">
+            Select team member
+          </label>
+          <select
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">Choose a team member...</option>
+            {directReports.length > 0 && (
+              <optgroup label="Direct Reports">
+                {directReports.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {skipOnly.length > 0 && (
+              <optgroup label="Indirect Reports">
+                {skipOnly.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {directReports.length === 0 && skipOnly.length === 0 && (
+              <option disabled>No team members found</option>
+            )}
+          </select>
         </div>
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-              Team member <span className="text-red-400">*</span>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="block text-[13px] font-medium text-slate-700">
+              Date
             </label>
-            <select value={form.employee_id}
-              onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
-              className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-              <option value="">Select team member…</option>
-              {eligible.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+            <input
+              type="date"
+              value={date}
+              min={minDate}
+              onChange={(e) => setDate(e.target.value)}
+              required
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-                Date <span className="text-red-400">*</span>
-              </label>
-              <input type="date" value={form.date}
-                onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
-                className="w-full px-3 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Time</label>
-              <input type="time" value={form.time}
-                onChange={e => setForm(p => ({ ...p, time: e.target.value }))}
-                className="w-full px-3 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-            </div>
+
+          <div className="space-y-1.5">
+            <label className="block text-[13px] font-medium text-slate-700">
+              Time
+            </label>
+            <TimePicker value={time} onChange={setTime} />
           </div>
-          <p className="text-[11px] text-slate-400">
-            A Google Doc will be auto-generated in a standard catch-up format, and the participant will receive a reminder.
+        </div>
+
+        {error && (
+          <p className="text-[12px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {error}
           </p>
-          {error && <p className="text-xs text-red-500">{error}</p>}
+        )}
+
+        <div className="flex justify-end pt-1">
+          <Button type="submit" variant="primary" size="md" disabled={submitting}>
+            {submitting ? "Scheduling..." : "Schedule Catchup"}
+          </Button>
         </div>
-        <div className="flex gap-2 px-6 pb-6">
-          <button onClick={onClose}
-            className="flex-1 py-3 text-sm font-semibold rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
-            Cancel
-          </button>
-          <button onClick={submit} disabled={submitting}
-            className="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl transition-colors">
-            {submitting ? "Scheduling…" : "Schedule"}
-          </button>
-        </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
-export default function Catchups({ currentUser, users, myCatchups, managerCatchups, onRefresh }) {
-  const [showModal, setShowModal] = useState(false);
+// ─── Edit Modal ──────────────────────────────────────────────────────────────
 
-  const ic = isIC(currentUser);
-  const l1 = isL1(currentUser);
-  const l2 = isL2(currentUser);
-  const manager = l1 || l2;
+function EditModal({ open, onClose, catchup, users, currentUser, onSuccess }) {
+  const directReports = users.filter((u) => u.manager_id === currentUser.id);
+  const skipReports = users.filter((u) => u.manager?.manager?.id === currentUser.id);
+  const directIds = new Set(directReports.map((d) => d.id));
+  const skipOnly = skipReports.filter((s) => !directIds.has(s.id));
 
-  // Employees see their own catchups; managers see their team's
-  const catchups = manager ? managerCatchups : myCatchups;
-  const upcoming = catchups?.upcoming || [];
-  const previous = catchups?.previous || [];
+  const initialDate = catchup?.date_and_time?.slice(0, 10) ?? "";
+  const initialTime = catchup?.date_and_time?.slice(11, 16) ?? "10:00";
 
-  const completed = previous.filter(c => getCatchupStatus(c) === "completed");
-  const missed    = previous.filter(c => getCatchupStatus(c) === "missed");
-  const total     = upcoming.length + previous.length;
-  const completionRate = total ? Math.round((completed.length / total) * 100) : 0;
+  const [employeeId, setEmployeeId] = useState(String(catchup?.employee_id ?? ""));
+  const [date, setDate] = useState(initialDate);
+  const [time, setTime] = useState(initialTime);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (catchup) {
+      setEmployeeId(String(catchup.employee_id));
+      setDate(catchup.date_and_time?.slice(0, 10) ?? "");
+      setTime(catchup.date_and_time?.slice(11, 16) ?? "10:00");
+      setError("");
+    }
+  }, [catchup]);
+
+  function handleClose() {
+    setError("");
+    onClose();
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    if (!date) { setError("Please select a date."); return; }
+    const payload = {};
+    if (parseInt(employeeId, 10) !== catchup.employee_id) payload.employee_id = parseInt(employeeId, 10);
+    const newDateTime = `${date}T${time}:00`;
+    if (newDateTime !== catchup.date_and_time?.slice(0, 19)) payload.date_and_time = newDateTime;
+    if (!Object.keys(payload).length) { handleClose(); return; }
+    setSubmitting(true);
+    try {
+      await updateCatchup(catchup.id, payload);
+      handleClose();
+      onSuccess();
+    } catch (err) {
+      setError(err?.response?.data?.detail ?? "Failed to update catchup. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
-    <div className="p-8 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-800">Catch-ups</h1>
-          <p className="text-sm mt-0.5 text-slate-400">
-            {manager
-              ? "Schedule and track 1:1 catch-ups with your team"
-              : "Your scheduled catch-ups and notes"}
-          </p>
+    <Modal open={open} onClose={handleClose} title="Edit Catchup" size="md">
+      <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
+        <div className="space-y-1.5">
+          <label className="block text-[13px] font-medium text-slate-700">Team member</label>
+          <select
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            {directReports.length > 0 && (
+              <optgroup label="Direct Reports">
+                {directReports.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </optgroup>
+            )}
+            {skipOnly.length > 0 && (
+              <optgroup label="Indirect Reports">
+                {skipOnly.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </optgroup>
+            )}
+          </select>
         </div>
-        {manager && (
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm shadow-blue-200">
-            <Plus className="w-4 h-4" /> Create catch-up
-          </button>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="block text-[13px] font-medium text-slate-700">Date</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              required
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-[13px] font-medium text-slate-700">Time</label>
+            <TimePicker value={time} onChange={setTime} />
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-[12px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        )}
+
+        <div className="flex justify-end pt-1">
+          <Button type="submit" variant="primary" size="md" disabled={submitting}>
+            {submitting ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+
+export default function Catchups() {
+  const { user } = useUser();
+  const managerMode = isManager(user);
+
+  const [myCatchups, setMyCatchups] = useState(null);
+  const [managerCatchups, setManagerCatchups] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editCatchup, setEditCatchup] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      setError("");
+      try {
+        const myData = await getMyCatchups();
+        setMyCatchups(myData);
+
+        if (managerMode) {
+          const [mgData, usersData] = await Promise.all([
+            getManagerCatchups(),
+            getUsers(),
+          ]);
+          setManagerCatchups(mgData);
+          setUsers(usersData);
+        }
+      } catch {
+        setError("Failed to load catchups. Please refresh the page.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [managerMode]);
+
+  async function refresh() {
+    try {
+      const [myData, mgData] = await Promise.all([
+        getMyCatchups(),
+        managerMode ? getManagerCatchups() : Promise.resolve(null),
+      ]);
+      setMyCatchups(myData);
+      if (mgData) setManagerCatchups(mgData);
+    } catch {
+      // silently fail on refresh
+    }
+  }
+
+  function handleDelete(id) {
+    setConfirmDeleteId(id);
+  }
+
+  async function doDelete() {
+    setDeleting(true);
+    try {
+      await deleteCatchup(confirmDeleteId);
+      setConfirmDeleteId(null);
+      refresh();
+    } catch {
+      // silently fail
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function handleEdit(catchup) {
+    setEditCatchup(catchup);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Spinner />
+      </div>
+    );
+  }
+
+  const myCatchupsHasItems =
+    myCatchups &&
+    ((myCatchups.upcoming?.length ?? 0) > 0 || (myCatchups.previous?.length ?? 0) > 0);
+
+  return (
+    <div className="p-8">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-2xl font-bold text-slate-900">Catchups</h1>
+        {managerMode && (
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => setModalOpen(true)}
+          >
+            <Plus size={15} />
+            Schedule Catchup
+          </Button>
         )}
       </div>
 
-      {/* Completion summary — managers only */}
-      {manager && (
-        <div className="bg-white rounded-2xl border border-slate-100 p-5 mb-6 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Completion status</p>
-            <span className="text-sm font-bold text-slate-800">{completionRate}%</span>
-          </div>
-          <div className="h-2 rounded-full overflow-hidden mb-3 bg-slate-100">
-            <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${completionRate}%` }} />
-          </div>
-          <div className="flex gap-4 text-xs text-slate-400">
-            <span><span className="font-semibold text-emerald-600">{completed.length}</span> completed</span>
-            <span><span className="font-semibold text-blue-500">{upcoming.length}</span> on track</span>
-            {missed.length > 0 && <span><span className="font-semibold text-red-500">{missed.length}</span> missed</span>}
-          </div>
+      {error && (
+        <div className="mb-6 text-[13px] text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+          {error}
         </div>
       )}
 
-      {/* Upcoming */}
-      <section className="mb-7">
-        <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-          Upcoming · {upcoming.length}
-        </h2>
-        {upcoming.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center">
-            <Bell className="w-8 h-8 mx-auto mb-2 text-slate-200" />
-            <p className="text-sm text-slate-400">No catch-ups scheduled</p>
+      {/* Manager View */}
+      {managerMode && managerCatchups ? (
+        <>
+          {/* Upcoming (manager view) */}
+          <div>
+            <SectionHeader
+              title="Upcoming Catchups"
+              count={managerCatchups.upcoming?.length ?? 0}
+            />
+            <CatchupList
+              catchups={managerCatchups.upcoming}
+              viewMode="manager"
+              users={users}
+              isPrevious={false}
+              currentUserId={user.id}
+              onDelete={handleDelete}
+              onEdit={handleEdit}
+            />
           </div>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(c => <CatchupCard key={c.id} catchup={c} users={users} />)}
-          </div>
-        )}
-      </section>
 
-      {/* Past */}
-      {previous.length > 0 && (
-        <section>
-          <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-            Past · {previous.length}
-          </h2>
-          <div className="space-y-2">
-            {[...previous]
-              .sort((a,b) => b.date_and_time.localeCompare(a.date_and_time))
-              .map(c => <CatchupCard key={c.id} catchup={c} users={users} />)}
+          {/* Previous (manager view) */}
+          <div className="mt-8">
+            <SectionHeader
+              title="Previous Catchups"
+              count={managerCatchups.previous?.length ?? 0}
+            />
+            <CatchupList
+              catchups={managerCatchups.previous}
+              viewMode="manager"
+              users={users}
+              isPrevious={true}
+              currentUserId={user.id}
+              onDelete={handleDelete}
+              onEdit={handleEdit}
+            />
           </div>
-        </section>
+
+          {/* Own catchups as employee (secondary section) */}
+          {myCatchupsHasItems && (
+            <div className="mt-8 pt-8 border-t border-slate-200">
+              <h2 className="text-[15px] font-semibold text-slate-700 mb-6">
+                Your Catchups
+              </h2>
+
+              <div>
+                <SectionHeader
+                  title="Upcoming"
+                  count={myCatchups.upcoming?.length ?? 0}
+                />
+                <CatchupList
+                  catchups={myCatchups.upcoming}
+                  viewMode="employee"
+                  users={users}
+                  isPrevious={false}
+                />
+              </div>
+
+              {(myCatchups.previous?.length ?? 0) > 0 && (
+                <div className="mt-8">
+                  <SectionHeader
+                    title="Previous"
+                    count={myCatchups.previous?.length ?? 0}
+                  />
+                  <CatchupList
+                    catchups={myCatchups.previous}
+                    viewMode="employee"
+                    users={users}
+                    isPrevious={true}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        /* IC / Employee View */
+        myCatchups && (
+          <>
+            <div>
+              <SectionHeader
+                title="Upcoming Catchups"
+                count={myCatchups.upcoming?.length ?? 0}
+              />
+              <CatchupList
+                catchups={myCatchups.upcoming}
+                viewMode="employee"
+                users={users}
+                isPrevious={false}
+              />
+            </div>
+
+            <div className="mt-8">
+              <SectionHeader
+                title="Previous Catchups"
+                count={myCatchups.previous?.length ?? 0}
+              />
+              <CatchupList
+                catchups={myCatchups.previous}
+                viewMode="employee"
+                users={users}
+                isPrevious={true}
+              />
+            </div>
+          </>
+        )
       )}
 
-      {showModal && (
-        <CreateCatchupModal
+      {/* Schedule Modal */}
+      {managerMode && (
+        <ScheduleModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
           users={users}
-          currentUser={currentUser}
-          onClose={() => setShowModal(false)}
-          onSuccess={onRefresh}
+          currentUser={user}
+          onSuccess={refresh}
         />
       )}
+
+      {/* Edit Modal */}
+      <EditModal
+        open={!!editCatchup}
+        onClose={() => setEditCatchup(null)}
+        catchup={editCatchup}
+        users={users}
+        currentUser={user}
+        onSuccess={() => { setEditCatchup(null); refresh(); }}
+      />
+
+      {/* Delete Confirm */}
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={doDelete}
+        title="Delete catchup?"
+        message="This will permanently delete the catchup and cancel the calendar invite. This cannot be undone."
+        loading={deleting}
+      />
     </div>
   );
 }

@@ -1,33 +1,25 @@
 const AVATAR_PALETTE = [
-  "bg-blue-500",
-  "bg-indigo-500",
-  "bg-violet-500",
-  "bg-rose-500",
-  "bg-pink-500",
-  "bg-orange-500",
-  "bg-amber-600",
-  "bg-emerald-600",
-  "bg-teal-600",
-  "bg-sky-500",
-  "bg-purple-500",
-  "bg-cyan-600",
+  "#3B82F6", "#6366F1", "#8B5CF6", "#EC4899",
+  "#F43F5E", "#F97316", "#EAB308", "#22C55E",
+  "#14B8A6", "#06B6D4", "#0EA5E9", "#A855F7",
 ];
 
-export function getInitials(name) {
+export function getInitials(name = "") {
   return name
     .split(/\s+/)
     .filter(Boolean)
     .map((x) => x[0])
     .join("")
-    .toUpperCase();
+    .toUpperCase()
+    .slice(0, 2);
 }
 
-export function avatarBg(name) {
-  let hash = 0;
+export function avatarColor(name = "") {
+  let h = 0;
   for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) & 0xfffffff;
+    h = (h * 31 + name.charCodeAt(i)) & 0xfffffff;
   }
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
 }
 
 export function getGreeting() {
@@ -51,6 +43,13 @@ export function formatDateShort(s) {
   });
 }
 
+export function formatDateTime(s) {
+  return new Date(s).toLocaleString("en-US", {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
 export function getLeaveStatus(leave) {
   if (leave.approved_by_l1 === false || leave.approved_by_l2 === false) return "rejected";
   if (leave.approved_by_l1 === true && leave.approved_by_l2 === true) return "approved";
@@ -58,9 +57,9 @@ export function getLeaveStatus(leave) {
   return "pending_l1";
 }
 
-export function isIC(user) { return user.role_level === "ic"; }
-export function isL1(user) { return user.role_level === "l1_manager"; }
-export function isL2(user) { return user.role_level === "l2_lead"; }
+export function isIC(user) { return user?.role_level === "ic"; }
+export function isL1(user) { return user?.role_level === "l1_manager"; }
+export function isL2(user) { return user?.role_level === "l2_lead"; }
 export function isManager(user) { return isL1(user) || isL2(user); }
 
 export function getDefaultETA() {
@@ -87,4 +86,11 @@ export function countDays(startDate, endDate) {
   const start = new Date(startDate + "T00:00:00");
   const end = new Date(endDate + "T00:00:00");
   return Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+}
+
+export function getUserStatus(user, onLeaveIds = new Set()) {
+  if (onLeaveIds.has(user.id)) return "leave";
+  if (user.office_status === "WFH") return "wfh";
+  if (user.office_status === "OUT") return "out";
+  return "office";
 }

@@ -1,604 +1,853 @@
-import { useState, useEffect } from "react";
-import { Plus, X, CalendarDays, PartyPopper, Trash2 } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, Trash2, AlertTriangle, ChevronDown } from "lucide-react";
+import { useUser } from "../contexts/UserContext";
+import {
+  getMyLeaves,
+  getManagerLeaves,
+  getLeaveLimits,
+  getHolidays,
+  createLeave,
+  approveLeave,
+  rejectLeave,
+  deleteLeave,
+} from "../lib/api";
+import {
+  formatDate,
+  formatDateShort,
+  isManager,
+  isL2,
+  getLeaveStatus,
+  countBusinessDays,
+  countDays,
+} from "../lib/utils";
 import Avatar from "../components/ui/Avatar";
-import { formatDate, getLeaveStatus, isIC, isL1, isL2, countBusinessDays } from "../lib/utils";
-import { createLeave, approveLeave, rejectLeave, deleteLeave, getManagerLeaves, getMyBalance, getHolidays, getLeaveLimits } from "../lib/api";
+import Badge from "../components/ui/Badge";
+import Button from "../components/ui/Button";
+import Modal from "../components/ui/Modal";
+import ConfirmDialog from "../components/ui/ConfirmDialog";
+import Spinner from "../components/ui/Spinner";
 
-function LeavePieCard({ label, used, total, color }) {
-  const remaining = Math.max(total - used, 0);
-  const data = [
-    { name: "Used", value: used },
-    { name: "Remaining", value: remaining },
-  ];
-  const COLORS = [color, "#e2e8f0"];
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function getStatusBadge(leave) {
+  const status = getLeaveStatus(leave);
+  if (status === "rejected") return <Badge variant="red">Rejected</Badge>;
+  if (status === "approved") return <Badge variant="green">Approved</Badge>;
+  if (status === "pending_l2") return <Badge variant="yellow">Awaiting L2</Badge>;
+  return <Badge variant="yellow">Pending approval</Badge>;
+}
+
+function getTypeBadge(leave_type) {
+  if (leave_type === "sick") return <Badge variant="orange">Sick</Badge>;
+  return <Badge variant="blue">Casual</Badge>;
+}
+
+function DateStamp({ start_date, end_date, leave_type }) {
+  const isMultiDay = start_date !== end_date;
+  const borderClass =
+    leave_type === "sick" ? "border-l-4 border-amber-500" : "border-l-4 border-blue-500";
+
+  const startDay = parseInt(start_date.split("-")[2], 10);
+  const startMonth = new Date(start_date + "T00:00:00")
+    .toLocaleString("en-US", { month: "short" })
+    .toUpperCase();
+
+  if (!isMultiDay) {
+    return (
+      <div className={`${borderClass} pl-3 min-w-[48px] flex flex-col items-center`}>
+        <span className="text-2xl font-bold text-slate-900 leading-none">{startDay}</span>
+        <span className="text-[10px] font-semibold tracking-widest text-slate-500 mt-0.5">
+          {startMonth}
+        </span>
+      </div>
+    );
+  }
+
+  const endDay = parseInt(end_date.split("-")[2], 10);
+  const endMonth = new Date(end_date + "T00:00:00")
+    .toLocaleString("en-US", { month: "short" })
+    .toUpperCase();
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex flex-col items-center">
-      <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">{label}</p>
-      <div className="w-28 h-28">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie data={data} cx="50%" cy="50%" innerRadius={32} outerRadius={50} dataKey="value" startAngle={90} endAngle={-270}>
-              {data.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
-            </Pie>
-            <Tooltip formatter={(v, n) => [`${v} days`, n]} />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="text-center mt-2">
-        <p className="text-2xl font-bold text-slate-800">{used}<span className="text-sm font-normal text-slate-400">/{total}</span></p>
-        <p className="text-xs text-slate-400 mt-0.5">{remaining} remaining</p>
-      </div>
+    <div className={`${borderClass} pl-3 min-w-[48px] flex flex-col items-center`}>
+      <span className="text-2xl font-bold text-slate-900 leading-none">{startDay}</span>
+      <span className="text-[10px] font-semibold tracking-widest text-slate-500 mt-0.5">
+        {startMonth}
+      </span>
+      <span className="text-[10px] text-slate-400 my-0.5">─</span>
+      <span className="text-2xl font-bold text-slate-900 leading-none">{endDay}</span>
+      <span className="text-[10px] font-semibold tracking-widest text-slate-500 mt-0.5">
+        {endMonth}
+      </span>
     </div>
   );
 }
 
-
-function LeaveCard({ leave }) {
+function LeaveCard({ leave, onDelete, holidays }) {
   const status = getLeaveStatus(leave);
-  const statusBadge = {
-    pending_l1: "bg-amber-50 text-amber-600",
-    pending_l2: "bg-blue-50 text-blue-600",
-    approved: "bg-emerald-50 text-emerald-600",
-    rejected: "bg-red-50 text-red-500",
-  }[status];
-  const statusLabel = {
-    pending_l1: "Pending",
-    pending_l2: "Pending L2",
-    approved: "Approved",
-    rejected: "Rejected",
-  }[status];
+  const isPending = status === "pending_l1" || status === "pending_l2";
+  const isUpcoming = status === "approved" && leave.start_date >= todayStr();
+  const showDelete = isPending || isUpcoming;
+
+  const isSameDay = leave.start_date === leave.end_date;
+  const dayCount = countBusinessDays(leave.start_date, leave.end_date, holidays || []);
+  const dateText = isSameDay
+    ? formatDateShort(leave.start_date)
+    : `${formatDateShort(leave.start_date)} – ${formatDateShort(leave.end_date)}`;
+  const dayLabel = `${dayCount}d`;
+  const isCasual = leave.leave_type === "casual";
 
   return (
-    <div className="bg-white rounded-xl border border-slate-100 p-4">
-      <div className="flex items-center gap-2 mb-0.5">
-        <span className="text-sm font-semibold text-slate-800 capitalize">{leave.leave_type}</span>
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusBadge}`}>{statusLabel}</span>
-      </div>
-      <p className="text-xs text-slate-400">
-        {formatDate(leave.start_date)}{leave.start_date !== leave.end_date ? " → " + formatDate(leave.end_date) : ""}
-      </p>
-      {leave.note && <p className="text-xs mt-1 italic text-slate-400">{leave.note}</p>}
-    </div>
-  );
-}
-
-function ApprovalCard({ leave, onApprove, onReject }) {
-  const status = getLeaveStatus(leave);
-  return (
-    <div className="bg-white rounded-xl border border-slate-100 p-5 flex items-start gap-4">
-      <Avatar name={leave.user?.name || "?"} size="lg" />
+    <div className="group flex items-stretch gap-3 py-2.5 border-b border-slate-100 last:border-b-0 last:pb-0 first:pt-0">
+      <div className={`w-[3px] rounded-full shrink-0 ${isCasual ? "bg-blue-400" : "bg-amber-400"}`} />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <p className="font-semibold text-sm text-slate-800">{leave.user?.name}</p>
-          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-500 capitalize">{leave.leave_type}</span>
-          {status === "pending_l2" && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-50 text-blue-600">Needs L2</span>
-          )}
-          {leave.over_limit && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-50 text-amber-600">⚠ Over balance</span>
-          )}
-        </div>
-        <p className="text-xs text-slate-400">
-          {formatDate(leave.start_date)}{leave.start_date !== leave.end_date ? " → " + formatDate(leave.end_date) : ""}
-        </p>
-        {leave.note && <p className="text-xs mt-1 italic text-slate-400">{leave.note}</p>}
-      </div>
-      <div className="flex gap-2 flex-shrink-0">
-        <button onClick={() => onReject(leave)}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-50 text-red-500 hover:bg-red-100 transition-colors">
-          Reject
-        </button>
-        <button onClick={() => onApprove(leave.id)}
-          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-colors">
-          Approve
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RejectReasonModal({ leave, onClose, onSubmit }) {
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-
-  async function submit() {
-    if (!reason.trim()) { setError("A reason is required."); return; }
-    setSubmitting(true);
-    try {
-      await onSubmit(reason.trim());
-    } catch (e) {
-      setError(e.response?.data?.detail || "Failed to reject leave.");
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">Reject Leave</h3>
-          <button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-6 space-y-3">
-          <p className="text-sm text-slate-500">
-            Rejecting <span className="font-medium text-slate-700">{leave.user?.name}</span>'s{" "}
-            <span className="capitalize">{leave.leave_type}</span> leave
-            ({formatDate(leave.start_date)}{leave.start_date !== leave.end_date ? " → " + formatDate(leave.end_date) : ""}).
-          </p>
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-              Reason <span className="text-red-400">*</span>
-            </label>
-            <textarea value={reason} onChange={e => { setReason(e.target.value); setError(""); }}
-              placeholder="Explain why this leave is being rejected…" rows={3}
-              className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 resize-none placeholder:text-slate-300" />
+        <span className="text-[14.5px] font-semibold text-slate-800 truncate">
+          {dateText}
+          <span className="text-slate-300 mx-1.5">·</span>
+          <span className={`font-medium ${isCasual ? "text-blue-500" : "text-amber-500"}`}>
+            {isCasual ? "Casual" : "Sick"}
+          </span>
+        </span>
+        {leave.over_limit && (
+          <div className="mt-1">
+            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-px">
+              Over limit
+            </span>
           </div>
-          {error && <p className="text-xs text-red-500">{error}</p>}
-        </div>
-        <div className="flex gap-2 px-6 pb-6">
-          <button onClick={onClose}
-            className="flex-1 py-3 text-sm font-semibold rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
-            Cancel
-          </button>
-          <button onClick={submit} disabled={submitting || !reason.trim()}
-            className="flex-1 py-3 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-50 rounded-xl transition-colors">
-            {submitting ? "Rejecting…" : "Reject Leave"}
-          </button>
-        </div>
+        )}
+        {leave.note && (
+          <p className="text-[11.5px] text-slate-400 mt-0.5 truncate italic">"{leave.note}"</p>
+        )}
+        {leave.rejection_note && (
+          <p className="text-[11.5px] text-red-400 mt-0.5 truncate">↩ {leave.rejection_note}</p>
+        )}
       </div>
+      {showDelete && (
+        <button
+          onClick={() => onDelete(leave.id)}
+          className="text-slate-400 hover:text-red-500 shrink-0 self-center transition-colors"
+          title="Delete"
+        >
+          <Trash2 size={15} />
+        </button>
+      )}
     </div>
   );
 }
 
-function HolidaysModal({ holidays, onClose }) {
-  const today = new Date().toISOString().slice(0, 10);
+function SectionHeader({ title, count }) {
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">Holiday Calendar 2026</h3>
-          <button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
-          {holidays.map(h => {
-            const isPast = h.date < today;
-            const isToday = h.date === today;
-            return (
-              <div key={h.date}
-                className={`flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0 ${isPast ? "opacity-40" : ""}`}>
-                <div>
-                  <p className={`text-sm font-medium ${isToday ? "text-blue-600" : "text-slate-800"}`}>{h.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {new Date(h.date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
-                  </p>
-                </div>
-                {isToday && (
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">Today</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-[13px] font-semibold text-slate-500 uppercase tracking-wider">
+        {title}
+      </span>
+      <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-slate-200 text-slate-600 text-[11px] font-semibold">
+        {count}
+      </span>
     </div>
   );
 }
 
-function validateLeaveForm(form) {
-  const today = new Date().toISOString().slice(0, 10);
-  const start = form.start_date;
-  const end = form.end_date || start;
+function ManagerLeaveCard({ leave, onApprove, onReject, holidays }) {
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectError, setRejectError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  if (!start) return "Start date is required.";
-  if (end < start) return "End date cannot be before start date.";
+  const isSameDay = leave.start_date === leave.end_date;
+  const dayCount = countBusinessDays(leave.start_date, leave.end_date, holidays || []);
 
-  if (form.leave_type === "sick") {
-    if (start !== today || (form.end_date && form.end_date !== today))
-      return "Sick leave can only be applied for today.";
-  }
+  const dateRangeText = isSameDay
+    ? `${formatDate(leave.start_date)} · 1 day`
+    : `${formatDateShort(leave.start_date)} – ${formatDateShort(leave.end_date)} · ${dayCount} day${dayCount !== 1 ? "s" : ""}`;
 
-  if (form.leave_type === "casual") {
-    const advance = Math.round((new Date(start + "T00:00:00") - new Date(today + "T00:00:00")) / 86400000);
-    const isMulti = form.end_date && form.end_date > start;
-    const min = isMulti ? 5 : 1;
-    if (advance < min) {
-      const earliest = new Date(new Date(today + "T00:00:00").getTime() + min * 86400000).toISOString().slice(0, 10);
-      return `Casual (${isMulti ? "multi-day" : "single-day"}) needs ${min} day(s) notice. Earliest start: ${earliest}.`;
+  async function handleApprove() {
+    setLoading(true);
+    try {
+      await onApprove(leave.id);
+    } finally {
+      setLoading(false);
     }
   }
 
-  if (!form.note.trim()) return "Note is required.";
-  return null;
+  async function handleRejectSubmit() {
+    if (!rejectReason.trim()) {
+      setRejectError("Reason is required.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await onReject(leave.id, rejectReason.trim());
+      setRejectOpen(false);
+      setRejectReason("");
+      setRejectError("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-sm transition-shadow">
+      <div className="flex items-start gap-3">
+        <Avatar name={leave.user.name} size="sm" />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[13px] font-semibold text-slate-900">{leave.user.name}</span>
+              {leave.over_limit && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                  <AlertTriangle size={10} />
+                  Over limit
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleApprove}
+                disabled={loading}
+                className="text-[12px] font-medium px-3 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => {
+                  setRejectOpen(!rejectOpen);
+                  setRejectError("");
+                }}
+                disabled={loading}
+                className="text-[12px] font-medium px-3 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+          <p className="text-[12px] text-slate-500 mt-1">
+            {leave.leave_type === "sick" ? "Sick" : "Casual"} · {dateRangeText}
+          </p>
+          {leave.note && (
+            <p className="text-[12px] text-slate-500 italic mt-0.5">"{leave.note}"</p>
+          )}
+        </div>
+      </div>
+      {rejectOpen && (
+        <div className="mt-3 pl-10">
+          <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+            <p className="text-[12px] font-medium text-slate-700 mb-2">Rejection reason</p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => {
+                setRejectReason(e.target.value);
+                setRejectError("");
+              }}
+              placeholder="Enter reason for rejection..."
+              className="w-full text-[13px] border border-slate-200 rounded-lg px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              rows={2}
+            />
+            {rejectError && (
+              <p className="text-[12px] text-red-600 mt-1">{rejectError}</p>
+            )}
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleRejectSubmit}
+                disabled={loading}
+                className="text-[12px] font-medium px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                Submit
+              </button>
+              <button
+                onClick={() => {
+                  setRejectOpen(false);
+                  setRejectReason("");
+                  setRejectError("");
+                }}
+                className="text-[12px] font-medium px-3 py-1 rounded-lg bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function RequestLeaveModal({ onClose, onSuccess, isLogOnly, balance, limits, holidays }) {
-  const [form, setForm] = useState({ leave_type: "casual", start_date: "", end_date: "", note: "" });
-  const [submitting, setSubmitting] = useState(false);
+function LeavePieCard({ label, taken, limit, color }) {
+  const isOver = taken > limit;
+  const pct = limit > 0 ? Math.min(taken / limit, 1) : 0;
+  const r = 46;
+  const cx = 60;
+  const cy = 60;
+  const circumference = 2 * Math.PI * r;
+  const fillColor = isOver ? "#ef4444" : color === "casual" ? "#3b82f6" : "#22c55e";
+  const remaining = Math.max(0, limit - taken);
+
+  return (
+    <div className="bg-white rounded-3xl border border-slate-100 shadow-md flex flex-col items-center py-4 px-16">
+      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-[0.14em] mb-4">
+        {label} Leave
+      </p>
+
+      <svg width="120" height="120" viewBox="0 0 120 120">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e8ecf2" strokeWidth="14" />
+        {pct > 0 && (
+          <circle
+            cx={cx} cy={cy} r={r}
+            fill="none"
+            stroke={fillColor}
+            strokeWidth="14"
+            strokeDasharray={`${pct * circumference} ${circumference}`}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        )}
+      </svg>
+
+      <div className="mt-4 text-center">
+        <div className="flex items-baseline justify-center">
+          <span className={`text-[36px] font-bold leading-none tracking-tight ${isOver ? "text-red-600" : "text-slate-800"}`}>
+            {taken}
+          </span>
+          <span className="text-[18px] text-slate-400 font-light leading-none ml-0.5">/{limit}</span>
+        </div>
+        <p className={`text-[12px] mt-2 ${isOver ? "text-red-500 font-medium" : "text-slate-400"}`}>
+          {isOver ? `${taken - limit} over limit` : `${remaining} remaining`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RequestLeaveModal({ open, onClose, holidays, onSuccess }) {
+  const [leaveType, setLeaveType] = useState("casual");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [note, setNote] = useState("");
   const [error, setError] = useState("");
-  const [overLimitWarning, setOverLimitWarning] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  async function submit(force = false) {
-    const validationError = validateLeaveForm(form);
-    if (validationError) { setError(validationError); return; }
+  const today = todayStr();
 
-    if (!force && balance && limits) {
-      const start = form.start_date;
-      const end = form.end_date || start;
-      const days = countBusinessDays(start, end, holidays);
-      const taken = form.leave_type === "sick" ? balance.sick_taken : balance.casual_taken;
-      const limit = form.leave_type === "sick" ? limits.sick : limits.casual;
-      const remaining = Math.max(limit - taken, 0);
-      if (days > remaining) {
-        setOverLimitWarning(`This leave uses ${days} working day${days !== 1 ? "s" : ""} but you only have ${remaining} remaining. Submit anyway?`);
-        return;
+  useEffect(() => {
+    if (!open) return;
+    setLeaveType("casual");
+    setStartDate("");
+    setEndDate("");
+    setNote("");
+    setError("");
+    setSubmitting(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (leaveType === "sick") {
+      setStartDate(today);
+      setEndDate(today);
+    } else {
+      setStartDate("");
+      setEndDate("");
+    }
+    setError("");
+  }, [leaveType]);
+
+  const effectiveEnd = endDate || startDate;
+  const businessDays =
+    startDate && effectiveEnd && effectiveEnd >= startDate
+      ? countBusinessDays(startDate, effectiveEnd, holidays || [])
+      : startDate
+      ? 1
+      : null;
+
+  function validate() {
+    if (!note.trim()) return "Note is required.";
+    if (!startDate) return "Start date is required.";
+
+    const end = endDate || startDate;
+
+    if (end < startDate) return "End date cannot be before start date.";
+
+    if (leaveType === "sick") {
+      if (startDate !== today || end !== today) {
+        return "Sick leave can only be requested for today.";
+      }
+    } else {
+      const isSingleDay = end === startDate;
+      const daysUntil = countDays(today, startDate);
+      if (isSingleDay) {
+        if (startDate <= today) {
+          return "Single-day casual leave must be submitted at least 1 day in advance.";
+        }
+      } else {
+        if (daysUntil < 5) {
+          return "Multi-day casual leave must be submitted at least 5 days in advance.";
+        }
       }
     }
 
-    setOverLimitWarning(null);
+    return null;
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const err = validate();
+    if (err) {
+      setError(err);
+      return;
+    }
     setSubmitting(true);
-    setError("");
     try {
-      await createLeave({ ...form, end_date: form.end_date || undefined });
+      await createLeave({
+        leave_type: leaveType,
+        note: note.trim(),
+        start_date: startDate,
+        end_date: endDate || startDate,
+      });
       onSuccess();
       onClose();
-    } catch (e) {
-      setError(e.response?.data?.detail || "Failed to submit leave.");
+    } catch (ex) {
+      setError(ex?.response?.data?.detail || "Failed to submit leave request.");
     } finally {
       setSubmitting(false);
     }
   }
 
+  const minCasualStart = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split("T")[0];
+  })();
+
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-800">{isLogOnly ? "Log leave" : "Request leave"}</h3>
-          <button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
+    <Modal open={open} onClose={onClose} title="Request Leave" size="md">
+      <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <div>
+          <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+            Leave type
+          </label>
+          <div className="flex gap-2">
+            {["casual", "sick"].map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setLeaveType(type)}
+                className={`flex-1 py-2 rounded-lg text-[13px] font-semibold border transition-all ${
+                  leaveType === type
+                    ? type === "sick"
+                      ? "bg-amber-50 border-amber-400 text-amber-700"
+                      : "bg-blue-50 border-blue-400 text-blue-700"
+                    : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="p-6 space-y-4">
+
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-              Type <span className="text-red-400">*</span>
+            <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Start date
             </label>
-            <select value={form.leave_type}
-              onChange={e => setForm(p => ({ ...p, leave_type: e.target.value }))}
-              className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-              <option value="casual">Casual</option>
-              <option value="sick">Sick Leave</option>
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-                Start date <span className="text-red-400">*</span>
-              </label>
-              <input type="date" value={form.start_date}
-                onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))}
-                className="w-full px-3 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-                End date <span className="font-normal normal-case text-slate-300">(optional)</span>
-              </label>
-              <input type="date" value={form.end_date}
-                onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))}
-                className="w-full px-3 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-            </div>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                setError("");
+              }}
+              disabled={leaveType === "sick"}
+              min={leaveType === "casual" ? minCasualStart : today}
+              max={leaveType === "sick" ? today : undefined}
+              className="w-full text-[13px] border border-slate-200 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+            />
           </div>
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">
-              Note <span className="text-red-400">*</span>
+            <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              End date
             </label>
-            <textarea value={form.note} onChange={e => { setForm(p => ({ ...p, note: e.target.value })); setError(""); }}
-              placeholder="Any additional details…" rows={3}
-              className="w-full px-4 py-3 text-sm rounded-xl border border-slate-200 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none placeholder:text-slate-300" />
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                setError("");
+              }}
+              disabled={leaveType === "sick"}
+              min={startDate || (leaveType === "casual" ? minCasualStart : today)}
+              className="w-full text-[13px] border border-slate-200 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+            />
           </div>
-          {overLimitWarning && (
-            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
-              <p className="text-xs font-semibold text-amber-700 mb-2">⚠ Over balance</p>
-              <p className="text-xs text-amber-700 mb-3">{overLimitWarning}</p>
-              <div className="flex gap-2">
-                <button onClick={() => setOverLimitWarning(null)}
-                  className="flex-1 py-2 text-xs font-semibold rounded-lg bg-white border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors">
-                  Go back
-                </button>
-                <button onClick={() => submit(true)} disabled={submitting}
-                  className="flex-1 py-2 text-xs font-semibold rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-colors">
-                  {submitting ? "Submitting…" : "Submit anyway"}
-                </button>
-              </div>
-            </div>
-          )}
-          {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
-        <div className="flex gap-2 px-6 pb-6">
-          <button onClick={onClose}
-            className="flex-1 py-3 text-sm font-semibold rounded-xl text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors">
+
+        {businessDays !== null && (
+          <p className="text-[12px] text-slate-500">
+            <span className="font-semibold text-slate-700">{businessDays}</span>{" "}
+            business day{businessDays !== 1 ? "s" : ""}
+          </p>
+        )}
+
+        <div>
+          <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+            Note <span className="text-red-500">*</span>
+          </label>
+          <textarea
+            value={note}
+            onChange={(e) => {
+              setNote(e.target.value);
+              setError("");
+            }}
+            placeholder="Reason for leave..."
+            rows={3}
+            className="w-full text-[13px] border border-slate-200 rounded-lg px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <p className="text-[12px] text-red-700">{error}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 pt-1">
+          <Button variant="secondary" size="md" type="button" onClick={onClose}>
             Cancel
-          </button>
-          <button onClick={() => submit(false)} disabled={submitting || !!overLimitWarning}
-            className="flex-1 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl transition-colors">
-            {submitting ? "Submitting…" : (isLogOnly ? "Log leave" : "Submit request")}
-          </button>
+          </Button>
+          <Button variant="primary" size="md" type="submit" disabled={submitting}>
+            {submitting ? "Submitting..." : "Submit Request"}
+          </Button>
         </div>
-      </div>
-    </div>
+      </form>
+    </Modal>
   );
 }
 
-export default function Leaves({ currentUser, myLeaves, onRefresh }) {
-  const [showModal, setShowModal] = useState(false);
-  const [showHolidays, setShowHolidays] = useState(false);
-  const [rejectTarget, setRejectTarget] = useState(null);
+function HolidaysModal({ open, onClose, holidays }) {
+  const today = todayStr();
+
+  const grouped = {};
+  (holidays || []).forEach((h) => {
+    const month = new Date(h.date + "T00:00:00").toLocaleString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+    if (!grouped[month]) grouped[month] = [];
+    grouped[month].push(h);
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="Public Holidays" size="lg">
+      <div className="p-6">
+      <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-1">
+        {Object.keys(grouped).length === 0 && (
+          <p className="text-[13px] text-slate-400 text-center py-4">No holidays listed.</p>
+        )}
+        {Object.entries(grouped).map(([month, items]) => (
+          <div key={month}>
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+              {month}
+            </p>
+            <div className="space-y-1">
+              {items.map((h) => {
+                const isPast = h.date < today;
+                const d = new Date(h.date + "T00:00:00");
+                const dayName = d.toLocaleString("en-US", { weekday: "short" });
+                const formatted = d.toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                });
+                return (
+                  <div
+                    key={h.date}
+                    className={`flex items-center justify-between py-2 px-3 rounded-lg ${
+                      isPast ? "opacity-40" : "bg-slate-50"
+                    }`}
+                  >
+                    <span
+                      className={`text-[13px] font-medium ${
+                        isPast ? "text-slate-400" : "text-slate-800"
+                      }`}
+                    >
+                      {h.name}
+                    </span>
+                    <span
+                      className={`text-[12px] ${isPast ? "text-slate-400" : "text-slate-500"}`}
+                    >
+                      {dayName}, {formatted}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      </div>
+    </Modal>
+  );
+}
+
+export default function Leaves() {
+  const { user } = useUser();
+
+  const [myLeaves, setMyLeaves] = useState(null);
+  const [managerLeaves, setManagerLeaves] = useState([]);
+  const [limits, setLimits] = useState(null);
   const [holidays, setHolidays] = useState([]);
-  const [limits, setLimits] = useState({ sick: 0, casual: 0 });
-  const [balance, setBalance] = useState({ sick_taken: 0, casual_taken: 0 });
-  const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const ic = isIC(currentUser);
-  const l1 = isL1(currentUser);
-  const l2 = isL2(currentUser);
-  const isLogOnly = l2 && !l1 && !ic;
+  const [showRequest, setShowRequest] = useState(false);
+  const [showHolidays, setShowHolidays] = useState(false);
+  const [prevOpen, setPrevOpen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (l1 || l2) {
-      getManagerLeaves().then(setPendingApprovals).catch(() => {});
-    }
-    if (ic || l1) {
-      getMyBalance().then(setBalance).catch(() => {});
-    }
-    getHolidays().then(setHolidays).catch(() => {});
-    getLeaveLimits().then(setLimits).catch(() => {});
+  const userIsManager = isManager(user);
+  const userIsL2 = isL2(user);
+
+  const fetchMyLeaves = useCallback(async () => {
+    const data = await getMyLeaves();
+    setMyLeaves(data);
   }, []);
 
-  async function refreshApprovals() {
-    if (l1 || l2) {
-      getManagerLeaves().then(setPendingApprovals).catch(() => {});
+  const fetchManagerLeaves = useCallback(async () => {
+    if (!userIsManager) return;
+    const data = await getManagerLeaves();
+    setManagerLeaves(data);
+  }, [userIsManager]);
+
+  useEffect(() => {
+    async function init() {
+      setLoading(true);
+      setError("");
+      try {
+        const promises = [getMyLeaves(), getLeaveLimits(), getHolidays()];
+        if (userIsManager) promises.push(getManagerLeaves());
+        const results = await Promise.all(promises);
+        setMyLeaves(results[0]);
+        setLimits(results[1]);
+        setHolidays(results[2]);
+        if (userIsManager) setManagerLeaves(results[3]);
+      } catch {
+        setError("Failed to load leave data. Please refresh.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    init();
+  }, [userIsManager]);
+
+  function handleDelete(id) {
+    setConfirmDeleteId(id);
+  }
+
+  async function doDelete() {
+    setDeleting(true);
+    try {
+      await deleteLeave(confirmDeleteId);
+      setMyLeaves((prev) => {
+        if (!prev) return prev;
+        return {
+          pending: prev.pending.filter((l) => l.id !== confirmDeleteId),
+          upcoming: prev.upcoming.filter((l) => l.id !== confirmDeleteId),
+          rejected: prev.rejected.filter((l) => l.id !== confirmDeleteId),
+          previous: prev.previous.filter((l) => l.id !== confirmDeleteId),
+        };
+      });
+      setConfirmDeleteId(null);
+    } catch {
+      // silently ignore
+    } finally {
+      setDeleting(false);
     }
   }
 
   async function handleApprove(id) {
-    try {
-      await approveLeave(id);
-      onRefresh();
-      refreshApprovals();
-      getMyBalance().then(setBalance).catch(() => {});
-    } catch {}
+    await approveLeave(id);
+    setManagerLeaves((prev) => prev.filter((l) => l.id !== id));
+    await fetchMyLeaves();
   }
 
-  async function submitReject(reason) {
-    await rejectLeave(rejectTarget.id, reason);
-    setRejectTarget(null);
-    onRefresh();
-    refreshApprovals();
+  async function handleReject(id, reason) {
+    await rejectLeave(id, reason);
+    setManagerLeaves((prev) => prev.filter((l) => l.id !== id));
+    await fetchMyLeaves();
   }
 
-  const [deletingId, setDeletingId] = useState(null);
-  const [deleteError, setDeleteError] = useState(null);
-
-  async function handleDelete(id) {
-    if (deletingId) return;
-    setDeletingId(id);
-    setDeleteError(null);
-    try {
-      await deleteLeave(id);
-      onRefresh();
-      if (!isLogOnly) getMyBalance().then(setBalance).catch(() => {});
-    } catch (e) {
-      setDeleteError(e.response?.data?.detail || "Failed to withdraw leave.");
-    } finally {
-      setDeletingId(null);
-    }
+  async function handleRequestSuccess() {
+    await fetchMyLeaves();
   }
 
-  const { pending = [], upcoming = [], rejected = [], previous = [] } = myLeaves;
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center min-h-[300px]">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4">
+          <p className="text-[13px] text-red-700">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const sickTaken = user?.sick_leaves_taken ?? 0;
+  const casualTaken = user?.casual_leaves_taken ?? 0;
+  const sickLimit = limits?.sick ?? 0;
+  const casualLimit = limits?.casual ?? 0;
+
+  const scrollSections = [
+    { key: "pending", title: "Pending", items: myLeaves?.pending || [] },
+    { key: "upcoming", title: "Upcoming", items: myLeaves?.upcoming || [] },
+    { key: "rejected", title: "Rejected", items: myLeaves?.rejected || [] },
+  ];
+  const previousItems = myLeaves?.previous || [];
 
   return (
-    <div className="p-8 max-w-2xl mx-auto">
+    <div className="p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-slate-800">My Leaves</h1>
-          <p className="text-sm mt-0.5 text-slate-400">Manage your time off</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowHolidays(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-xl transition-colors">
-            <PartyPopper className="w-4 h-4" /> Holidays
-          </button>
-          {(ic || l1 || l2) && (
-            <button onClick={() => setShowModal(true)}
-              className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm shadow-blue-200">
-              <Plus className="w-4 h-4" /> {l2 && !l1 && !ic ? "Log leave" : "Request leave"}
-            </button>
-          )}
+            <h1 className="text-2xl font-bold text-slate-900">My Leaves</h1>
+            <p className="text-[13.5px] text-slate-400 mt-0.5">Manage your time off</p>
+          </div>
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" size="md" onClick={() => setShowHolidays(true)}>
+            Public Holidays
+          </Button>
+          <Button variant="primary" size="md" onClick={() => setShowRequest(true)}>
+            <Plus size={16} className="mr-1.5" />
+            {userIsL2 ? "Log Leave" : "Request Leave"}
+          </Button>
         </div>
       </div>
 
-      {deleteError && (
-        <div className="mb-5 rounded-xl bg-red-50 border border-red-100 px-4 py-3 flex items-center justify-between">
-          <p className="text-sm text-red-500">{deleteError}</p>
-          <button onClick={() => setDeleteError(null)} className="text-red-400 hover:text-red-600 ml-3 flex-shrink-0">
-            <X className="w-4 h-4" />
-          </button>
+      {/* Leave balance */}
+      {!userIsL2 && (
+        <div className="grid grid-cols-2 gap-4 mb-8">
+          <LeavePieCard label="Casual" taken={casualTaken} limit={casualLimit} color="casual" />
+          <LeavePieCard label="Sick"   taken={sickTaken}   limit={sickLimit}   color="sick"   />
         </div>
       )}
 
-      {/* Leave balance summary — not shown for pure L2 */}
-      {(ic || l1) && (
-        <div className="grid grid-cols-2 gap-3 mb-8">
-          <LeavePieCard label="Casual Leave" used={balance.casual_taken} total={limits.casual} color="#3b82f6" />
-          <LeavePieCard label="Sick Leave" used={balance.sick_taken} total={limits.sick} color="#10b981" />
-        </div>
-      )}
-
-      {/* My leaves — IC and L1: full history */}
-      {(ic || l1) && (
-        <>
-          {[
-            { title: "Pending", items: pending, borderColor: "border-amber-100", badge: "bg-amber-50 text-amber-600", badgeLabel: "Pending" },
-            { title: "Upcoming", items: upcoming, borderColor: "border-emerald-100", badge: "bg-emerald-50 text-emerald-600", badgeLabel: "Approved" },
-          ].map(section => (
-            <section key={section.title} className="mb-7">
-              <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-                {section.title} · {section.items.length}
-              </h2>
-              {section.items.length === 0
-                ? <p className="text-sm py-2 text-slate-300">None</p>
-                : <div className="space-y-2">
-                    {section.items.map(l => (
-                      <div key={l.id} className={`group relative bg-white rounded-xl border ${section.borderColor} p-4`}>
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-sm font-semibold text-slate-800 capitalize">{l.leave_type}</span>
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${section.badge}`}>{section.badgeLabel}</span>
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          {formatDate(l.start_date)}{l.start_date !== l.end_date ? " → " + formatDate(l.end_date) : ""}
-                        </p>
-                        {l.note && <p className="text-xs mt-1 italic text-slate-400">{l.note}</p>}
-                        <button
-                          onClick={() => handleDelete(l.id)}
-                          disabled={deletingId === l.id}
-                          className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-              }
-            </section>
-          ))}
-
-          {rejected.length > 0 && (
-            <section className="mb-7">
-              <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-                Rejected · {rejected.length}
-              </h2>
-              <div className="space-y-2">
-                {rejected.map(l => {
-                  const rejectedByL1 = l.approved_by_l1 === false;
-                  const rejectorName = rejectedByL1
-                    ? l.user?.manager?.name
-                    : l.user?.manager?.manager?.name;
-                  return (
-                    <div key={l.id} className="bg-white rounded-xl border border-red-100 p-4">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-sm font-semibold text-slate-800 capitalize">{l.leave_type}</span>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-500">Rejected</span>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        {formatDate(l.start_date)}{l.start_date !== l.end_date ? " → " + formatDate(l.end_date) : ""}
-                      </p>
-                      {l.note && <p className="text-xs mt-1 italic text-slate-400">{l.note}</p>}
-                      {l.rejection_note && (
-                        <div className="mt-2 pt-2 border-t border-red-50">
-                          <p className="text-xs text-red-500">
-                            <span className="font-semibold">{rejectorName || "Manager"}</span>: {l.rejection_note}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+      {/* Personal leave sections — scrollable cards (hidden for L2) */}
+      {!userIsL2 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+          {scrollSections.map(({ key, title, items }) => (
+            <div key={key} className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col h-[260px]">
+              <div className="flex items-center gap-2 mb-4 shrink-0">
+                <span className="text-[15px] font-semibold text-slate-700 flex-1">{title}</span>
+                {items.length > 0 && (
+                  <span className="text-[12px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">
+                    {items.length}
+                  </span>
+                )}
               </div>
-            </section>
-          )}
-
-          <section className="mb-8">
-            <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-              Previous · {previous.length}
-            </h2>
-            {previous.length === 0
-              ? <p className="text-sm py-2 text-slate-300">None</p>
-              : <div className="space-y-2">
-                  {previous.map(l => <LeaveCard key={l.id} leave={l} />)}
-                </div>
-            }
-          </section>
-        </>
-      )}
-
-      {/* Pure L2: upcoming logged leaves only */}
-      {isLogOnly && (
-        <section className="mb-7">
-          <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-            Upcoming · {upcoming.length}
-          </h2>
-          {upcoming.length === 0
-            ? <p className="text-sm py-2 text-slate-300">None</p>
-            : <div className="space-y-2">
-                {upcoming.map(l => (
-                  <div key={l.id} className="group relative bg-white rounded-xl border border-emerald-100 p-4">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm font-semibold text-slate-800 capitalize">{l.leave_type}</span>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">Logged</span>
-                    </div>
-                    <p className="text-xs text-slate-400">
-                      {formatDate(l.start_date)}{l.start_date !== l.end_date ? " → " + formatDate(l.end_date) : ""}
-                    </p>
-                    {l.note && <p className="text-xs mt-1 italic text-slate-400">{l.note}</p>}
-                    <button
-                      onClick={() => handleDelete(l.id)}
-                      disabled={deletingId === l.id}
-                      className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+              <div className="flex-1 overflow-y-auto pr-0.5">
+                {items.length === 0 ? (
+                  <p className="text-[12.5px] text-slate-400">Nothing here.</p>
+                ) : (
+                  items.map((leave) => (
+                    <LeaveCard
+                      key={leave.id}
+                      leave={leave}
+                      onDelete={handleDelete}
+                      holidays={holidays}
+                    />
+                  ))
+                )}
               </div>
-          }
-        </section>
-      )}
-
-      {/* Approvals section — L1 and L2 */}
-      {(l1 || l2) && (
-        <section className="mb-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest mb-3 text-slate-400">
-            Pending Approvals · {pendingApprovals.length}
-          </h2>
-          {pendingApprovals.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-slate-100 p-10 text-center">
-              <CalendarDays className="w-8 h-8 mx-auto mb-2 text-slate-200" />
-              <p className="text-sm text-slate-400">No pending requests</p>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Manager approval section */}
+      {userIsManager && (
+        <div className="mt-2 pt-8 border-t border-slate-200">
+          <SectionHeader title="Pending Approvals" count={managerLeaves.length} />
+          {managerLeaves.length === 0 ? (
+            <p className="text-[13px] text-slate-400">No pending approvals.</p>
           ) : (
             <div className="space-y-3">
-              {pendingApprovals.map(l => (
-                <ApprovalCard key={l.id} leave={l} onApprove={handleApprove} onReject={setRejectTarget} />
+              {managerLeaves.map((leave) => (
+                <ManagerLeaveCard
+                  key={leave.id}
+                  leave={leave}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                  holidays={holidays}
+                />
               ))}
             </div>
           )}
-        </section>
+        </div>
       )}
 
-      {rejectTarget && (
-        <RejectReasonModal
-          leave={rejectTarget}
-          onClose={() => setRejectTarget(null)}
-          onSubmit={submitReject}
-        />
+      {/* Previous leaves — collapsible (hidden for L2) */}
+      {!userIsL2 && (
+        <div className="mt-8 pt-6 border-t border-slate-200">
+          <button
+            onClick={() => setPrevOpen((v) => !v)}
+            className="flex items-center gap-2 w-full text-left group mb-1"
+          >
+            <span className="text-[13px] font-semibold text-slate-500 uppercase tracking-wider">
+              Previous
+            </span>
+            <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-slate-200 text-slate-600 text-[11px] font-semibold">
+              {previousItems.length}
+            </span>
+            <ChevronDown
+              size={15}
+              className={`ml-1 text-slate-400 transition-transform duration-200 ${prevOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {prevOpen && (
+            <div className="mt-3 space-y-3">
+              {previousItems.length === 0 ? (
+                <p className="text-[13px] text-slate-400">Nothing here.</p>
+              ) : (
+                previousItems.map((leave) => (
+                  <LeaveCard
+                    key={leave.id}
+                    leave={leave}
+                    onDelete={handleDelete}
+                    holidays={holidays}
+                  />
+                ))
+              )}
+            </div>
+          )}
+        </div>
       )}
-      {showHolidays && (
-        <HolidaysModal holidays={holidays} onClose={() => setShowHolidays(false)} />
-      )}
-      {showModal && (
-        <RequestLeaveModal
-          onClose={() => setShowModal(false)}
-          onSuccess={() => { onRefresh(); if (!isLogOnly) getMyBalance().then(setBalance).catch(() => {}); }}
-          isLogOnly={isLogOnly}
-          balance={balance}
-          limits={limits}
-          holidays={holidays}
-        />
-      )}
+
+      {/* Modals */}
+      <RequestLeaveModal
+        open={showRequest}
+        onClose={() => setShowRequest(false)}
+        holidays={holidays}
+        onSuccess={handleRequestSuccess}
+      />
+      <HolidaysModal
+        open={showHolidays}
+        onClose={() => setShowHolidays(false)}
+        holidays={holidays}
+      />
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={doDelete}
+        title="Delete leave request?"
+        message="This will permanently delete the leave request. This cannot be undone."
+        loading={deleting}
+      />
     </div>
   );
 }

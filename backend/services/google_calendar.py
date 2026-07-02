@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
@@ -63,3 +63,26 @@ def _create_calendar_event(
         raise RuntimeError(f"Google Calendar event created but no Meet link returned (event id: {result.get('id')})")
 
     return link, result["id"]
+
+
+def _delete_calendar_event(manager_refresh_token: str, event_id: str) -> None:
+    """Delete a Google Calendar event and cancel all invites."""
+    creds = _build_credentials(manager_refresh_token)
+    service = build("calendar", "v3", credentials=creds)
+    service.events().delete(calendarId="primary", eventId=event_id, sendUpdates="all").execute()
+
+
+def _patch_calendar_event_time(manager_refresh_token: str, event_id: str, new_date_and_time: datetime) -> None:
+    """Update only the start/end time of an existing Calendar event."""
+    creds = _build_credentials(manager_refresh_token)
+    service = build("calendar", "v3", credentials=creds)
+    end_time = new_date_and_time + timedelta(minutes=30)
+    service.events().patch(
+        calendarId="primary",
+        eventId=event_id,
+        body={
+            "start": {"dateTime": new_date_and_time.isoformat(), "timeZone": "UTC"},
+            "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
+        },
+        sendUpdates="all",
+    ).execute()

@@ -164,7 +164,7 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
         if leave.start_date != today or effective_end != today:
             raise HTTPException(status_code=422, detail="Sick leave can only be applied for today.")
 
-    if leave.leave_type == LeaveType.casual:
+    if leave.leave_type == LeaveType.casual and current_user.manager:
         advance = (leave.start_date - today).days
         is_multi = (effective_end - leave.start_date).days >= 1
         min_advance = 5 if is_multi else 1
@@ -173,6 +173,20 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
             earliest = today + timedelta(days=min_advance)
             raise HTTPException(status_code=422,
                 detail=f"Casual leave ({label}) needs {min_advance} day(s) advance notice. Earliest start: {earliest}.")
+    # Overlap check — reject if any non-rejected leave already covers any day in the requested range
+    overlap = db.query(Leave).filter(
+        Leave.user_id == current_user.id,
+        Leave.start_date <= effective_end,
+        Leave.end_date >= leave.start_date,
+        Leave.approved_by_l1.isnot(False),
+        Leave.approved_by_l2.isnot(False),
+    ).first()
+    if overlap:
+        raise HTTPException(
+            status_code=422,
+            detail=f"You already have a leave request covering that period ({overlap.start_date} – {overlap.end_date})."
+        )
+
     # Check balance before any modification
     days = count_weekdays(leave.start_date, effective_end)
     limit = LEAVE_LIMITS.get(str(leave.leave_type), 0)

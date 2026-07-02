@@ -94,3 +94,14 @@ def _build_and_share_doc(
         ).execute()
 
     return f"https://docs.google.com/document/d/{doc_id}/edit"
+
+
+def _delete_doc_file(owner_refresh_token: str, doc_url: str) -> None:
+    """Delete a Google Drive document by its URL."""
+    try:
+        doc_id = doc_url.split("/d/")[1].split("/")[0]
+    except (IndexError, AttributeError):
+        return
+    creds = _build_credentials(owner_refresh_token)
+    drive = build("drive", "v3", credentials=creds)
+    drive.files().delete(fileId=doc_id).execute()

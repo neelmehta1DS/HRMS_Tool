@@ -22,6 +22,8 @@ class Catchup(Base):
 
     notes_doc_link: Mapped[str] = mapped_column()
     meeting_link: Mapped[str] = mapped_column()
+    calendar_event_id: Mapped[Optional[str]] = mapped_column(default=None)
+    background_creation_finished: Mapped[bool] = mapped_column(default=False)
     date_and_time: Mapped[datetime] = mapped_column(DateTime)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
