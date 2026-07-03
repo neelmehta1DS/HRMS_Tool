@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, CalendarDays, Users, LogOut } from "lucide-react";
+import { LayoutDashboard, CalendarDays, Users, LogOut, Settings } from "lucide-react";
 import { useUser } from "../../contexts/UserContext";
 import { logout } from "../../lib/api";
 import Avatar from "../ui/Avatar";
@@ -48,6 +48,21 @@ export default function Sidebar() {
             {label}
           </NavLink>
         ))}
+        {user?.is_admin && (
+          <NavLink
+            to="/admin"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13.5px] font-medium transition-colors ${
+                isActive
+                  ? "text-blue-700 bg-blue-50"
+                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+              }`
+            }
+          >
+            <Settings size={15} strokeWidth={2} />
+            Admin
+          </NavLink>
+        )}
       </nav>
 
       <div className="px-3 pb-4 border-t border-slate-100 pt-3">

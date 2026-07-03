@@ -700,8 +700,8 @@ export default function Leaves() {
 
   const sickTaken = user?.sick_leaves_taken ?? 0;
   const casualTaken = user?.casual_leaves_taken ?? 0;
-  const sickLimit = limits?.sick ?? 0;
-  const casualLimit = limits?.casual ?? 0;
+  const sickLimit = limits?.sick ?? null;
+  const casualLimit = limits?.casual ?? null;
 
   const scrollSections = [
     { key: "pending", title: "Pending", items: myLeaves?.pending || [] },
@@ -720,7 +720,7 @@ export default function Leaves() {
           </div>
         <div className="flex items-center gap-3">
           <Button variant="secondary" size="md" onClick={() => setShowHolidays(true)}>
-            Public Holidays
+            Holiday Calendar
           </Button>
           <Button variant="primary" size="md" onClick={() => setShowRequest(true)}>
             <Plus size={16} className="mr-1.5" />
@@ -730,10 +730,10 @@ export default function Leaves() {
       </div>
 
       {/* Leave balance */}
-      {!userIsL2 && (
+      {!userIsL2 && (casualLimit !== null || sickLimit !== null) && (
         <div className="grid grid-cols-2 gap-4 mb-8">
-          <LeavePieCard label="Casual" taken={casualTaken} limit={casualLimit} color="casual" />
-          <LeavePieCard label="Sick"   taken={sickTaken}   limit={sickLimit}   color="sick"   />
+          {casualLimit !== null && <LeavePieCard label="Casual" taken={casualTaken} limit={casualLimit} color="casual" />}
+          {sickLimit !== null && <LeavePieCard label="Sick"   taken={sickTaken}   limit={sickLimit}   color="sick"   />}
         </div>
       )}
 

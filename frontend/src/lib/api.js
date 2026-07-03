@@ -33,3 +33,11 @@ export const getManagerCatchups = () => api.get("/catchups/manager/me").then(r =
 export const createCatchup = (data) => api.post("/catchups", data).then(r => r.data);
 export const updateCatchup = (id, data) => api.patch(`/catchups/${id}`, data).then(r => r.data);
 export const deleteCatchup = (id) => api.delete(`/catchups/${id}`);
+
+// Admin
+export const getAdminUsers = () => api.get("/admin/users").then(r => r.data);
+export const adminUpdateUser = (id, data) => api.patch(`/admin/users/${id}`, data).then(r => r.data);
+export const updateLeaveLimits = (data) => api.put("/admin/leaves/limits", data).then(r => r.data);
+export const addHoliday = (data) => api.post("/admin/leaves/holidays", data).then(r => r.data);
+export const updateHoliday = (date, data) => api.put(`/admin/leaves/holidays/${date}`, data).then(r => r.data);
+export const deleteHoliday = (date) => api.delete(`/admin/leaves/holidays/${date}`);

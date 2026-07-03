@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Leaves from "./pages/Leaves";
 import Catchups from "./pages/Catchups";
+import Admin from "./pages/Admin";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -17,6 +18,7 @@ createRoot(document.getElementById("root")).render(
           <Route index element={<Dashboard />} />
           <Route path="/leaves" element={<Leaves />} />
           <Route path="/catchups" element={<Catchups />} />
+          <Route path="/admin" element={<Admin />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

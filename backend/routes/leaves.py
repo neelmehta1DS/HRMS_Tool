@@ -141,9 +141,9 @@ def get_my_leaves_as_manager(current_user: Annotated[User, Depends(get_current_u
     def with_over_limit(leave: Leave) -> LeaveResponse:
         r = LeaveResponse.model_validate(leave)
         d = count_weekdays(leave.start_date, leave.end_date)
-        lim = LEAVE_LIMITS.get(str(leave.leave_type), 0)
+        lim = LEAVE_LIMITS.get(str(leave.leave_type))
         taken = leave.user.sick_leaves_taken if leave.leave_type == LeaveType.sick else leave.user.casual_leaves_taken
-        r.over_limit = (taken + d) > lim
+        r.over_limit = lim is not None and (taken + d) > lim
         return r
 
     return [with_over_limit(l) for l in l1_pending + l2_pending]
@@ -189,9 +189,9 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
 
     # Check balance before any modification
     days = count_weekdays(leave.start_date, effective_end)
-    limit = LEAVE_LIMITS.get(str(leave.leave_type), 0)
+    limit = LEAVE_LIMITS.get(str(leave.leave_type))
     current_taken = current_user.sick_leaves_taken if leave.leave_type == LeaveType.sick else current_user.casual_leaves_taken
-    over_limit = (current_taken + days) > limit
+    over_limit = limit is not None and (current_taken + days) > limit
 
     # L2 leads (no manager) are auto-approved for all leave types
     auto_approve = leave.leave_type == LeaveType.sick or not current_user.manager

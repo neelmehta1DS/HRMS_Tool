@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import settings
 from db.database import Base, SessionLocal, engine
-from routes import auth, users, leaves, catchups, slack_bot, dashboard
+from routes import auth, users, leaves, catchups, slack_bot, dashboard, admin
 
 from seed.seed_users import seed_users  
 
@@ -62,6 +62,7 @@ app.include_router(leaves.router)
 app.include_router(catchups.router)
 app.include_router(slack_bot.router)
 app.include_router(dashboard.router)
+app.include_router(admin.router)
 
 
 @app.get("/health")

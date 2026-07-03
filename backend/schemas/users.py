@@ -35,6 +35,8 @@ class UserResponse(BaseModel):
     sick_leaves_taken: int = 0
     casual_leaves_taken: int = 0
 
+    is_admin: bool = False
+
     birthday: Optional[date] = None
     joining_date: Optional[date] = None
 
