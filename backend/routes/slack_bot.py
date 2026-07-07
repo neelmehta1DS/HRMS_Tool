@@ -1,5 +1,5 @@
 from typing import Annotated
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,11 +9,12 @@ from schemas.slack_bot import (
     BotLeaveCreate, BotApproveRequest, BotRejectRequest, BotSetMessageRequest,
 )
 from schemas.leaves import LeaveResponse
-from models.leaves import Leave, LeaveType
+from models.leaves import Leave, LeaveApproval, LeaveType, LeaveStatus, ApprovalStatus
 from models.users import User
 from core.config import settings
 from db.database import get_db
-from routes.leaves import count_weekdays
+from routes.leaves import count_weekdays, working_days_until, add_working_days
+from core.leave_limits import LEAVE_RULES, get_notice_days
 
 router = APIRouter(prefix="/bot", tags=["slack-bot"])
 
@@ -80,33 +81,43 @@ def create_leave_for_user(
     if body.leave_type == LeaveType.sick:
         if start != today or end != today:
             raise HTTPException(status_code=422, detail="Sick leave can only be applied for today.")
-    elif body.leave_type == LeaveType.casual:
-        advance = (start - today).days
-        is_multi = (end - start).days >= 1
-        min_advance = 5 if is_multi else 1
+    elif body.leave_type == LeaveType.casual and not user.is_admin:
+        advance = working_days_until(today, start)
+        duration = count_weekdays(start, end)
+        notice_rules = LEAVE_RULES.get("casual_advance_notice", [])
+        min_advance = get_notice_days(duration, notice_rules)
         if advance < min_advance:
-            label = "multi-day" if is_multi else "single-day"
-            earliest = today + timedelta(days=min_advance)
+            earliest = add_working_days(today, min_advance)
             raise HTTPException(status_code=422,
-                detail=f"Casual leave ({label}) needs {min_advance} day(s) advance notice. Earliest start: {earliest}.")
+                detail=f"Casual leave ({duration} working day{'s' if duration > 1 else ''}) requires {min_advance} working day{'s' if min_advance > 1 else ''} advance notice. Earliest start: {earliest}.")
 
-    auto_approve = body.leave_type == LeaveType.sick or not user.manager
+    manager = user.manager
+    skip = manager.manager if manager else None
+    auto_approve = body.leave_type == LeaveType.sick or not manager
+
     leave = Leave(
         user_id=user.id,
         leave_type=body.leave_type,
         note=body.note,
         start_date=start,
         end_date=end,
-        approved_by_l1=True if auto_approve else None,
-        approved_by_l2=True if auto_approve else None,
+        status=LeaveStatus.approved if auto_approve else LeaveStatus.pending,
     )
     db.add(leave)
+    db.flush()
+
+    if not auto_approve:
+        db.add(LeaveApproval(leave_id=leave.id, approver_id=manager.id, step=1))
+        if skip:
+            db.add(LeaveApproval(leave_id=leave.id, approver_id=skip.id, step=2))
+
     if auto_approve:
         days = count_weekdays(start, end)
         if body.leave_type == LeaveType.sick:
             user.sick_leaves_taken += days
         elif body.leave_type == LeaveType.casual:
             user.casual_leaves_taken += days
+
     db.commit()
     db.refresh(leave)
     return leave
@@ -139,29 +150,31 @@ def approve_leave(
     if not approver:
         raise HTTPException(status_code=404, detail="Approver not found — set their Slack ID in the HRMS tool")
 
-    leave_user = leave.user
-    is_direct_manager = leave_user.manager_id == approver.id
-    is_skip_manager = bool(leave_user.manager and leave_user.manager.manager_id == approver.id)
+    approval_step = (
+        db.query(LeaveApproval)
+        .where(LeaveApproval.leave_id == leave_id, LeaveApproval.status == ApprovalStatus.pending)
+        .order_by(LeaveApproval.step)
+        .first()
+    )
 
-    if not is_direct_manager and not is_skip_manager:
+    if not approval_step:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Leave is already fully approved or rejected")
+    if approval_step.approver_id != approver.id:
         raise HTTPException(status_code=403, detail="Not your leave to approve")
 
-    was_fully_approved = leave.approved_by_l1 is True and leave.approved_by_l2 is True
+    approval_step.status = ApprovalStatus.approved
+    approval_step.decided_at = datetime.utcnow()
+    db.flush()  # write the status change before counting remaining pending steps
 
-    if is_direct_manager:
-        if leave.approved_by_l1 is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already acted on this leave request")
-        leave.approved_by_l1 = True
-        if not leave_user.manager or not leave_user.manager.manager_id:
-            leave.approved_by_l2 = True
-    else:
-        if leave.approved_by_l2 is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already acted on this leave request")
-        leave.approved_by_l2 = True
-
-    is_fully_approved = leave.approved_by_l1 is True and leave.approved_by_l2 is True
-    if not was_fully_approved and is_fully_approved:
+    remaining = (
+        db.query(LeaveApproval)
+        .where(LeaveApproval.leave_id == leave_id, LeaveApproval.status == ApprovalStatus.pending)
+        .count()
+    )
+    if remaining == 0:
+        leave.status = LeaveStatus.approved
         days = count_weekdays(leave.start_date, leave.end_date)
+        leave_user = leave.user
         if leave.leave_type == LeaveType.sick:
             leave_user.sick_leaves_taken += days
         elif leave.leave_type == LeaveType.casual:
@@ -187,23 +200,23 @@ def reject_leave(
     if not approver:
         raise HTTPException(status_code=404, detail="Approver not found — set their Slack ID in the HRMS tool")
 
-    leave_user = leave.user
-    is_direct_manager = leave_user.manager_id == approver.id
-    is_skip_manager = bool(leave_user.manager and leave_user.manager.manager_id == approver.id)
+    approval_step = (
+        db.query(LeaveApproval)
+        .where(LeaveApproval.leave_id == leave_id, LeaveApproval.status == ApprovalStatus.pending)
+        .order_by(LeaveApproval.step)
+        .first()
+    )
 
-    if not is_direct_manager and not is_skip_manager:
+    if not approval_step:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Leave is already fully approved or rejected")
+    if approval_step.approver_id != approver.id:
         raise HTTPException(status_code=403, detail="Not your leave to reject")
 
-    if is_direct_manager:
-        if leave.approved_by_l1 is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already acted on this leave request")
-        leave.approved_by_l1 = False
-    else:
-        if leave.approved_by_l2 is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You have already acted on this leave request")
-        leave.approved_by_l2 = False
+    approval_step.status = ApprovalStatus.rejected
+    approval_step.decided_at = datetime.utcnow()
+    approval_step.rejection_note = body.reason or ""
+    leave.status = LeaveStatus.rejected
 
-    leave.rejection_note = body.reason or ""
     db.commit()
     db.refresh(leave)
     return leave
@@ -219,8 +232,7 @@ def get_team_availability(
     on_leave_records = db.query(Leave).filter(
         Leave.start_date <= today,
         Leave.end_date >= today,
-        Leave.approved_by_l1 == True,
-        Leave.approved_by_l2 == True,
+        Leave.status == LeaveStatus.approved,
     ).all()
 
     on_leave_user_ids = {l.user_id for l in on_leave_records}
@@ -246,21 +258,17 @@ def get_team_availability(
     return {"on_leave": on_leave, "available": available}
 
 
-@router.patch("/leaves/{leave_id}/message")
-def set_leave_message(
-    leave_id: int,
+@router.patch("/leave-approvals/{approval_id}/message")
+def set_approval_message(
+    approval_id: int,
     body: BotSetMessageRequest,
     db: Annotated[Session, Depends(get_db)],
     _=Depends(verify_bot_key),
 ):
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
-    if not leave:
-        raise HTTPException(status_code=404, detail="Leave not found")
-    if body.level == "l1":
-        leave.slack_l1_channel = body.channel
-        leave.slack_l1_ts = body.ts
-    elif body.level == "l2":
-        leave.slack_l2_channel = body.channel
-        leave.slack_l2_ts = body.ts
+    approval = db.query(LeaveApproval).filter(LeaveApproval.id == approval_id).first()
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval step not found")
+    approval.slack_channel = body.channel
+    approval.slack_ts = body.ts
     db.commit()
     return {"ok": True}

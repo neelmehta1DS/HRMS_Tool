@@ -23,7 +23,7 @@ function effectiveSlackId(rawId) {
   return DEMO_MODE && DEMO_USER_ID ? DEMO_USER_ID : rawId;
 }
 
-const TOTALS = require('../leave_limits.json');
+const TOTALS = require('../leave_policy.json').limits;
 function makeBalance(user) {
   return {
     sick:         TOTALS.sick   - user.sick_taken,
@@ -140,16 +140,12 @@ app.view('leave_apply_submit', async ({ ack, body, view, client }) => {
   }
   await ack();
 
-  // Fetch full user (with manager chain) for DM routing
-  const user = await api.getUser(slackId).catch(() => null);
-  if (!user) return;
-
   const days    = rules.businessDays(start_date, end_date, store.holidaySet);
   const dateStr = start_date === end_date ? start_date : `${start_date} → ${end_date}`;
 
-  // No manager chain → auto-approved by backend (L2 lead applying)
-  if (leave.approved_by_l1 === true && leave.approved_by_l2 === true) {
-    await dm(client, user.slack_user_id, {
+  // Auto-approved (sick leave or no manager chain)
+  if (leave.status === 'approved') {
+    await dm(client, slackId, {
       text: `Leave #${leave.id} auto-approved.`,
       blocks: [{ type: 'section', text: { type: 'mrkdwn',
         text: `:white_check_mark: *Leave #${leave.id} auto-approved & logged.*\n` +
@@ -158,26 +154,26 @@ app.view('leave_apply_submit', async ({ ack, body, view, client }) => {
     return;
   }
 
-  // Notify applicant
-  const l1Name = user.l1_manager?.name || '(manager)';
-  const l2Name = user.l2_manager?.name;
-  await dm(client, user.slack_user_id, {
+  // Notify applicant — approver names come from the approval steps
+  const firstStep  = leave.approvals[0];
+  const secondStep = leave.approvals.find(a => a.step > firstStep.step);
+  const awaitingText = `*${firstStep.approver.name}*` + (secondStep ? `, then *${secondStep.approver.name}*.` : '.');
+  await dm(client, slackId, {
     text: `Leave #${leave.id} submitted.`,
     blocks: [{ type: 'section', text: { type: 'mrkdwn',
       text: `:hourglass_flowing_sand: *Leave #${leave.id} submitted* — ${leave_type} · ${dateStr} · ${days} working day(s).\n` +
-            `Awaiting approval from *${l1Name}*` + (l2Name ? `, then *${l2Name}*.` : '.') } }],
+            `Awaiting approval from ${awaitingText}` } }],
   });
 
-  // DM L1 manager
-  if (user.l1_manager?.slack_user_id) {
-    const stepLabel = user.l2_manager ? 'Step 1 of 2' : 'Single approval';
-    const taken = leave_type === 'sick' ? user.sick_taken : user.casual_taken;
-    const limit = TOTALS[leave_type] || 0;
-    const overLimit = (taken + days) > limit;
-    const l1Msg = await dm(client, user.l1_manager.slack_user_id,
-      V.approverMessage(leave, user, stepLabel, days, overLimit));
-    if (l1Msg?.ts) {
-      await api.setLeaveMessage(leave.id, 'l1', l1Msg.channel, l1Msg.ts).catch(() => {});
+  // DM the first approver
+  if (firstStep.approver.slack_user_id) {
+    const stepLabel  = secondStep ? 'Step 1 of 2' : 'Single approval';
+    const taken      = leave_type === 'sick' ? leave.user.sick_leaves_taken : leave.user.casual_leaves_taken;
+    const overLimit  = (taken + days) > (TOTALS[leave_type] || 0);
+    const firstMsg   = await dm(client, firstStep.approver.slack_user_id,
+      V.approverMessage(leave, leave.user, stepLabel, days, overLimit));
+    if (firstMsg?.ts) {
+      await api.setApprovalMessage(firstStep.id, firstMsg.channel, firstMsg.ts).catch(() => {});
     }
   }
 });
@@ -200,9 +196,10 @@ app.action('leave_approve', async ({ ack, body, client }) => {
     return;
   }
 
-  const summaryLine = (leave.approved_by_l1 === true && leave.approved_by_l2 === true)
+  const nextStep    = leave.approvals.find(a => a.status === 'pending');
+  const summaryLine = leave.status === 'approved'
     ? ':white_check_mark: *Approved* (fully).'
-    : ':white_check_mark: *Approved* — awaiting L2 approval.';
+    : ':white_check_mark: *Approved* — awaiting further approval.';
 
   await client.chat.update({
     channel: body.channel.id, ts: body.message.ts,
@@ -210,34 +207,35 @@ app.action('leave_approve', async ({ ack, body, client }) => {
     blocks: V.decidedBlocks(leave, summaryLine),
   }).catch(() => {});
 
-  if (leave.approved_by_l1 === true && leave.approved_by_l2 === true) {
+  const days    = rules.businessDays(leave.start_date, leave.end_date, store.holidaySet);
+  const dateStr = leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} → ${leave.end_date}`;
+
+  if (leave.status === 'approved') {
     // Fully approved — notify applicant
-    const days    = rules.businessDays(leave.start_date, leave.end_date, store.holidaySet);
-    const dateStr = leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} → ${leave.end_date}`;
     await dm(client, leave.user?.slack_user_id, {
       text: `Leave #${leave.id} approved!`,
       blocks: [{ type: 'section', text: { type: 'mrkdwn',
         text: `:tada: *Leave #${leave.id} fully approved!*\n` +
               `${leave.leave_type} · ${dateStr} · ${days} working day(s).` } }],
     });
-  } else if (leave.approved_by_l1 === true && leave.approved_by_l2 === null) {
-    // L1 approved, L2 still pending — fetch full user to get L2 Slack ID
-    const applicant = await api.getUser(leave.user?.slack_user_id).catch(() => null);
-    if (!applicant?.l2_manager?.slack_user_id) return;
+  } else if (nextStep) {
+    // Step approved but more remain — notify applicant and DM next approver
+    const justApproved = leave.approvals.find(a => a.status === 'approved');
+    const approverName = justApproved?.approver.name || 'Manager';
 
-    const days = rules.businessDays(leave.start_date, leave.end_date, store.holidaySet);
-
-    await dm(client, applicant.slack_user_id, {
+    await dm(client, leave.user?.slack_user_id, {
       text: `Leave #${leave.id} update`,
       blocks: [{ type: 'section', text: { type: 'mrkdwn',
-        text: `:arrow_forward: *Leave #${leave.id}* — ${applicant.l1_manager?.name} approved. ` +
-              `Now awaiting *${applicant.l2_manager.name}*.` } }],
+        text: `:arrow_forward: *Leave #${leave.id}* — ${approverName} approved. ` +
+              `Now awaiting *${nextStep.approver.name}*.` } }],
     });
 
-    const l2Msg = await dm(client, applicant.l2_manager.slack_user_id,
-      V.approverMessage(leave, applicant, 'Step 2 of 2', days));
-    if (l2Msg?.ts) {
-      await api.setLeaveMessage(leave.id, 'l2', l2Msg.channel, l2Msg.ts).catch(() => {});
+    if (nextStep.approver.slack_user_id) {
+      const nextMsg = await dm(client, nextStep.approver.slack_user_id,
+        V.approverMessage(leave, leave.user, 'Step 2 of 2', days));
+      if (nextMsg?.ts) {
+        await api.setApprovalMessage(nextStep.id, nextMsg.channel, nextMsg.ts).catch(() => {});
+      }
     }
   }
 });

@@ -26,6 +26,8 @@ export const rejectLeave = (id, reason) => api.patch(`/leaves/${id}/reject`, { r
 export const deleteLeave = (id) => api.delete(`/leaves/${id}`);
 export const getHolidays = () => api.get("/leaves/holidays").then(r => r.data);
 export const getLeaveLimits = () => api.get("/leaves/limits").then(r => r.data);
+export const getLeaveRules = () => api.get("/leaves/rules").then(r => r.data);
+export const updateLeaveRules = (data) => api.put("/admin/leaves/rules", data).then(r => r.data);
 
 // Catchups
 export const getMyCatchups = () => api.get("/catchups/me").then(r => r.data);

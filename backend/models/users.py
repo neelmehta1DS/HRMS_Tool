@@ -16,7 +16,6 @@ class RoleLevel(StrEnum):
 
 class OfficeStatus(StrEnum):
     IN = "IN"
-    OUT = "OUT"
     WFH = "WFH"
 
 
@@ -29,10 +28,17 @@ class User(Base):
     role: Mapped[str]
 
     # Hierarchy
-    role_level: Mapped[RoleLevel] = mapped_column(Enum(RoleLevel), default=RoleLevel.ic)
     manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), default=None)
     manager: Mapped[Optional["User"]] = relationship("User", remote_side=[id], back_populates="reports")
     reports: Mapped[list["User"]] = relationship("User", back_populates="manager")
+
+    @property
+    def role_level(self) -> RoleLevel:
+        if self.manager_id is None:
+            return RoleLevel.l2_lead
+        if self.manager and self.manager.manager_id is None:
+            return RoleLevel.l1_manager
+        return RoleLevel.ic
 
     # Google OAuth
     refresh_token: Mapped[Optional[str]] = mapped_column(default=None)
@@ -41,9 +47,11 @@ class User(Base):
     slack_user_id: Mapped[Optional[str]] = mapped_column(unique=True, default=None)
 
     # Live status
-    office_status: Mapped[OfficeStatus] = mapped_column(Enum(OfficeStatus), default=OfficeStatus.OUT)
+    office_status: Mapped[Optional[OfficeStatus]] = mapped_column(Enum(OfficeStatus), default=None)
     late_arrive_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
     early_exit_eta: Mapped[Optional[time]] = mapped_column(Time, default=None)
+    stepping_out_from: Mapped[Optional[time]] = mapped_column(Time, default=None)
+    stepping_out_to: Mapped[Optional[time]] = mapped_column(Time, default=None)
 
     # Leave balances (weekdays only)
     sick_leaves_taken: Mapped[int] = mapped_column(default=0)

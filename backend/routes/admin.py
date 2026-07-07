@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 
 from core.security import get_current_user
 from core.holidays import HOLIDAYS, _persist_and_reload
-from core.leave_limits import LEAVE_LIMITS, persist_leave_limits
+from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, persist_leave_limits
 from db.database import get_db
-from models.users import User, RoleLevel
+from models.users import User
 from schemas.users import UserResponse
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -33,7 +33,6 @@ def get_all_users(
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
-    role_level: Optional[RoleLevel] = None
     manager_id: Optional[int] = None
     slack_user_id: Optional[str] = None
     is_admin: Optional[bool] = None
@@ -58,7 +57,7 @@ def update_user(
             _check_no_cycle(user_id, new_manager_id, db)
         user.manager_id = new_manager_id
 
-    for field in ("name", "role", "role_level", "slack_user_id", "is_admin"):
+    for field in ("name", "role", "slack_user_id", "is_admin"):
         if field in update.model_fields_set:
             setattr(user, field, getattr(update, field))
 
@@ -102,6 +101,28 @@ def update_limits(
         LEAVE_LIMITS["casual"] = body.casual
     persist_leave_limits()
     return LEAVE_LIMITS
+
+
+# ─── Leave rules ──────────────────────────────────────────────────────────────
+
+class NoticeRule(BaseModel):
+    min: int
+    max: Optional[int] = None
+    notice: int
+
+class LeaveRulesUpdate(BaseModel):
+    casual_advance_notice: Optional[list[NoticeRule]] = None
+
+
+@router.put("/leaves/rules")
+def update_rules(
+    body: LeaveRulesUpdate,
+    _: Annotated[User, Depends(require_admin)],
+):
+    if body.casual_advance_notice is not None:
+        LEAVE_RULES["casual_advance_notice"] = [r.model_dump(exclude_none=True) for r in body.casual_advance_notice]
+    persist_leave_limits()
+    return LEAVE_RULES
 
 
 # ─── Holidays ─────────────────────────────────────────────────────────────────

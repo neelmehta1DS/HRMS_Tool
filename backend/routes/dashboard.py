@@ -3,12 +3,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, and_
+from sqlalchemy.orm import Session
 
 from core.security import get_current_user
 from db.database import get_db
 from models.catchups import Catchup
-from models.leaves import Leave
+from models.leaves import Leave, LeaveApproval, LeaveStatus, ApprovalStatus
 from models.users import User
 from schemas.catchups import CatchupResponse
 
@@ -107,15 +108,13 @@ def get_dashboard_summary(
     on_leave_today = db.query(Leave).where(
         Leave.start_date <= today,
         Leave.end_date >= today,
-        Leave.approved_by_l1 == True,
-        Leave.approved_by_l2 == True,
+        Leave.status == LeaveStatus.approved,
     ).all()
 
     upcoming_leaves = db.query(Leave).where(
         Leave.start_date > today,
         Leave.start_date <= thirty_days_out,
-        Leave.approved_by_l1 == True,
-        Leave.approved_by_l2 == True,
+        Leave.status == LeaveStatus.approved,
     ).order_by(Leave.start_date).all()
 
     my_catchups = db.query(Catchup).where(
@@ -130,29 +129,24 @@ def get_dashboard_summary(
         Catchup.date_and_time <= datetime.combine(thirty_days_out, datetime.max.time()),
     ).order_by(Catchup.date_and_time).all()
 
-    LeaveOwner = aliased(User)
-    OwnerManager = aliased(User)
-
-    l1_pending_count = (
-        db.query(Leave)
-        .join(LeaveOwner, Leave.user_id == LeaveOwner.id)
-        .where(
-            LeaveOwner.manager_id == current_user.id,
-            Leave.approved_by_l1.is_(None),
-            Leave.approved_by_l2.isnot(False),
-            Leave.start_date >= today,
-        )
-        .count()
+    min_pending = (
+        db.query(LeaveApproval.leave_id, func.min(LeaveApproval.step).label("min_step"))
+        .where(LeaveApproval.status == ApprovalStatus.pending)
+        .group_by(LeaveApproval.leave_id)
+        .subquery()
     )
 
-    l2_pending_count = (
-        db.query(Leave)
-        .join(LeaveOwner, Leave.user_id == LeaveOwner.id)
-        .join(OwnerManager, LeaveOwner.manager_id == OwnerManager.id)
+    pending_approvals_count = (
+        db.query(LeaveApproval)
+        .join(min_pending, and_(
+            min_pending.c.leave_id == LeaveApproval.leave_id,
+            LeaveApproval.step == min_pending.c.min_step,
+        ))
+        .join(Leave, Leave.id == LeaveApproval.leave_id)
         .where(
-            OwnerManager.manager_id == current_user.id,
-            Leave.approved_by_l1 == True,
-            Leave.approved_by_l2.is_(None),
+            LeaveApproval.approver_id == current_user.id,
+            LeaveApproval.status == ApprovalStatus.pending,
+            Leave.status == LeaveStatus.pending,
             Leave.start_date >= today,
         )
         .count()
@@ -182,6 +176,6 @@ def get_dashboard_summary(
             for lv in upcoming_leaves
         ],
         my_catchups_upcoming=[CatchupResponse.model_validate(c) for c in my_catchups],
-        pending_approvals_count=l1_pending_count + l2_pending_count,
+        pending_approvals_count=pending_approvals_count,
         upcoming_catchups_as_manager=[CatchupResponse.model_validate(c) for c in catchups_as_manager],
     )

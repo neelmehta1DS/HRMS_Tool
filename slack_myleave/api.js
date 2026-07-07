@@ -57,8 +57,8 @@ async function rejectLeave(leaveId, approverSlackId, reason) {
   return res.data;
 }
 
-async function setLeaveMessage(leaveId, level, channel, ts) {
-  const res = await client.patch(`/bot/leaves/${leaveId}/message`, { level, channel, ts });
+async function setApprovalMessage(approvalId, channel, ts) {
+  const res = await client.patch(`/bot/leave-approvals/${approvalId}/message`, { channel, ts });
   return res.data;
 }
 
@@ -67,4 +67,4 @@ async function getTeamAvailability() {
   return res.data;
 }
 
-module.exports = { getUser, createLeave, getLeave, approveLeave, rejectLeave, setLeaveMessage, getTeamAvailability };
+module.exports = { getUser, createLeave, getLeave, approveLeave, rejectLeave, setApprovalMessage, getTeamAvailability };

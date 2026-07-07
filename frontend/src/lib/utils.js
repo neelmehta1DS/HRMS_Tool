@@ -51,9 +51,10 @@ export function formatDateTime(s) {
 }
 
 export function getLeaveStatus(leave) {
-  if (leave.approved_by_l1 === false || leave.approved_by_l2 === false) return "rejected";
-  if (leave.approved_by_l1 === true && leave.approved_by_l2 === true) return "approved";
-  if (leave.approved_by_l1 === true && leave.approved_by_l2 === null) return "pending_l2";
+  if (leave.status === "rejected") return "rejected";
+  if (leave.status === "approved") return "approved";
+  const nextPending = leave.approvals?.find(a => a.status === "pending");
+  if (nextPending?.step > 1) return "pending_l2";
   return "pending_l1";
 }
 
@@ -91,6 +92,6 @@ export function countDays(startDate, endDate) {
 export function getUserStatus(user, onLeaveIds = new Set()) {
   if (onLeaveIds.has(user.id)) return "leave";
   if (user.office_status === "WFH") return "wfh";
-  if (user.office_status === "OUT") return "out";
-  return "office";
+  if (user.office_status === "IN") return "office";
+  return "out"; // null (status not set) or any legacy value
 }

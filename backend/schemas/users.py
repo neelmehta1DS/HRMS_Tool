@@ -28,9 +28,11 @@ class UserResponse(BaseModel):
 
     slack_user_id: Optional[str] = None
 
-    office_status: OfficeStatus
+    office_status: Optional[OfficeStatus] = None
     late_arrive_eta: Optional[time] = None
     early_exit_eta: Optional[time] = None
+    stepping_out_from: Optional[time] = None
+    stepping_out_to: Optional[time] = None
 
     sick_leaves_taken: int = 0
     casual_leaves_taken: int = 0
@@ -46,3 +48,5 @@ class UserStatusUpdate(BaseModel):
     office_status: Optional[OfficeStatus] = None
     late_arrive_eta: Optional[time] = None
     early_exit_eta: Optional[time] = None
+    stepping_out_from: Optional[time] = None
+    stepping_out_to: Optional[time] = None

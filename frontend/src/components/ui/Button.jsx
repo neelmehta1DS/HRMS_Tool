@@ -12,6 +12,7 @@ const sizes = {
   sm: "px-3 py-1.5 text-[12px]",
   md: "px-4 py-2 text-[13px]",
   lg: "px-5 py-2.5 text-[14px]",
+  xl: "px-6 py-3 text-[15px]",
 };
 
 export default function Button({ children, variant = "primary", size = "md", className = "", ...props }) {

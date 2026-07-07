@@ -4,7 +4,7 @@
 const dayjs = require('dayjs');
 const { today } = require('./leaveRules');
 
-const TOTALS = require('../leave_limits.json');
+const TOTALS = require('../leave_policy.json').limits;
 
 // ---------- Modal: main menu ----------
 function menuView(user, balance) {

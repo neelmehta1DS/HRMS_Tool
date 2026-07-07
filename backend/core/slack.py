@@ -35,6 +35,20 @@ def dm(slack_user_id: str, **kwargs) -> Optional[dict]:
         return None
 
 
+def post_channel(channel_id: str, **kwargs) -> Optional[dict]:
+    """Post a message to a channel. In demo mode redirects to SLACK_DEMO_USER_ID."""
+    client = _get_client()
+    if not client or not channel_id:
+        return None
+    dest = settings.SLACK_DEMO_USER_ID if (settings.SLACK_DEMO_MODE and settings.SLACK_DEMO_USER_ID) else channel_id
+    try:
+        r = client.chat_postMessage(channel=dest, **kwargs)
+        return {"channel": r["channel"], "ts": r["ts"]}
+    except SlackApiError as e:
+        print(f"[slack channel error] {e.response['error']}")
+        return None
+
+
 def delete_msg(channel: Optional[str], ts: Optional[str]) -> None:
     """Delete a Slack message by channel + ts. Silent on failure."""
     if not channel or not ts:
@@ -58,6 +72,7 @@ def approver_payload(leave, user, step_label: str, days: int, over_limit: bool =
     type_label = str(leave.leave_type).capitalize()
     day_word = "day" if days == 1 else "days"
     over_limit_line = f"\n⚠️ *This will exceed {user.name}'s {type_label.lower()} leave balance.*" if over_limit else ""
+    exception_line = f"\n🚨 *EXCEPTION REQUEST — notice rules waived by employee.*" if getattr(leave, "is_exception", False) else ""
     text = (
         f"*Leave request* `#{leave.id}`  ·  _{step_label}_\n"
         f"*From:* {user.name} ({user.role})\n"
@@ -65,6 +80,7 @@ def approver_payload(leave, user, step_label: str, days: int, over_limit: bool =
         f"*Dates:* {date_str}  (*{days}* working {day_word})\n"
         f"*Note:* {leave.note or '—'}"
         f"{over_limit_line}"
+        f"{exception_line}"
     )
     return {
         "text": f"Leave request #{leave.id} from {user.name}",

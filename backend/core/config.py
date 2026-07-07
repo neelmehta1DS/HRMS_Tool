@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     SLACK_BOT_TOKEN: str = ""
     SLACK_DEMO_MODE: bool = False
     SLACK_DEMO_USER_ID: str = ""
+    SLACK_DIGEST_CHANNEL: str = ""  # channel ID for the 9 AM daily digest
 
     @field_validator("ALLOWED_ORIGINS")
     def parse_allowed_origins(cls, v: str) -> List[str]:

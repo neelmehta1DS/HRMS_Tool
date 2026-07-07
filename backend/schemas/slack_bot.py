@@ -42,6 +42,5 @@ class BotRejectRequest(BaseModel):
 
 
 class BotSetMessageRequest(BaseModel):
-    level: str   # "l1" or "l2"
     channel: str
     ts: str
