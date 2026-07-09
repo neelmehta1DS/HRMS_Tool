@@ -1,17 +1,17 @@
 const variants = {
-  blue:   "bg-blue-50 text-blue-700 ring-1 ring-blue-100",
-  green:  "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100",
-  yellow: "bg-amber-50 text-amber-700 ring-1 ring-amber-100",
-  red:    "bg-red-50 text-red-700 ring-1 ring-red-100",
-  violet: "bg-violet-50 text-violet-700 ring-1 ring-violet-100",
-  teal:   "bg-teal-50 text-teal-700 ring-1 ring-teal-100",
-  slate:  "bg-slate-100 text-slate-600 ring-1 ring-slate-200",
-  orange: "bg-orange-50 text-orange-700 ring-1 ring-orange-100",
+  blue:   "bg-blue-100 text-blue-900 ring-1 ring-blue-200",
+  green:  "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200",
+  yellow: "bg-amber-100 text-amber-900 ring-1 ring-amber-200",
+  red:    "bg-red-100 text-red-900 ring-1 ring-red-200",
+  violet: "bg-violet-100 text-violet-900 ring-1 ring-violet-200",
+  teal:   "bg-teal-100 text-teal-900 ring-1 ring-teal-200",
+  slate:  "bg-slate-200 text-slate-800 ring-1 ring-slate-300",
+  orange: "bg-orange-100 text-orange-900 ring-1 ring-orange-200",
 };
 
 export default function Badge({ children, variant = "slate", className = "" }) {
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${variants[variant] ?? variants.slate} ${className}`}>
+    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${variants[variant] ?? variants.slate} ${className}`}>
       {children}
     </span>
   );

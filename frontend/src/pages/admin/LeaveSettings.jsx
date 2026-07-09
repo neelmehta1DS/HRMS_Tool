@@ -1,8 +1,18 @@
 import { useState, useEffect } from "react";
-import { Pencil, Trash2, Plus, Check, X } from "lucide-react";
+import { Pencil, Trash2, Plus, Check, X, Clock } from "lucide-react";
 import { getLeaveLimits, getLeaveRules, updateLeaveLimits, updateLeaveRules, getHolidays, addHoliday, updateHoliday, deleteHoliday } from "../../lib/api";
 import Button from "../../components/ui/Button";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+
+const LEAVE_TYPES = [
+  { key: "earned", label: "Earned Leave" },
+  { key: "sick_and_casual", label: "Sick & Casual Leave" },
+  { key: "bereavement", label: "Bereavement Leave" },
+  { key: "marriage", label: "Marriage Leave" },
+  { key: "maternity", label: "Maternity Leave" },
+  { key: "paternity", label: "Paternity Leave" },
+  { key: "lwp", label: "Leave Without Pay" },
+];
 
 function formatHolidayDate(dateStr) {
   return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
@@ -13,6 +23,13 @@ function formatHolidayDate(dateStr) {
   });
 }
 
+function formatCutoff(hour, min) {
+  const h = hour % 12 || 12;
+  const ampm = hour < 12 ? "AM" : "PM";
+  const m = String(min).padStart(2, "0");
+  return `${h}:${m} ${ampm}`;
+}
+
 function SectionTitle({ children }) {
   return (
     <h2 className="text-[15px] font-semibold text-slate-900 mb-4">{children}</h2>
@@ -20,21 +37,27 @@ function SectionTitle({ children }) {
 }
 
 export default function LeaveSettings() {
-  const [limits, setLimits] = useState({ sick: 0, casual: 0 });
-  const [draftLimits, setDraftLimits] = useState({ sick: 0, casual: 0 });
+  const [limits, setLimits] = useState({});
+  const [draftLimits, setDraftLimits] = useState({});
   const [editingLimits, setEditingLimits] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
 
   const defaultNotice = [
-    { min: 1, max: 1, notice: 3 },
-    { min: 2, max: 2, notice: 7 },
-    { min: 3, max: 3, notice: 14 },
-    { min: 4, max: null, notice: 30 },
+    { min: 1, max: 2, notice: 14 },
+    { min: 3, max: 4, notice: 21 },
+    { min: 5, max: null, notice: 30 },
   ];
   const [notice, setNotice] = useState(defaultNotice);
   const [draftNotice, setDraftNotice] = useState(defaultNotice);
   const [editingRules, setEditingRules] = useState(false);
   const [savingRules, setSavingRules] = useState(false);
+
+  const [cutoffHour, setCutoffHour] = useState(10);
+  const [cutoffMin, setCutoffMin] = useState(0);
+  const [draftCutoffHour, setDraftCutoffHour] = useState(10);
+  const [draftCutoffMin, setDraftCutoffMin] = useState(0);
+  const [editingCutoff, setEditingCutoff] = useState(false);
+  const [savingCutoff, setSavingCutoff] = useState(false);
 
   const [holidays, setHolidays] = useState([]);
   const [addingHoliday, setAddingHoliday] = useState(false);
@@ -53,9 +76,15 @@ export default function LeaveSettings() {
     Promise.all([getLeaveLimits(), getLeaveRules(), getHolidays()]).then(([lim, rules, hols]) => {
       setLimits(lim);
       setDraftLimits({ ...lim });
-      const n = rules.casual_advance_notice ?? defaultNotice;
+      const n = rules.earned_advance_notice ?? defaultNotice;
       setNotice(n);
       setDraftNotice(n.map(r => ({ ...r })));
+      const h = rules.sick_and_casual_cutoff_hour ?? 10;
+      const m = rules.sick_and_casual_cutoff_min ?? 0;
+      setCutoffHour(h);
+      setCutoffMin(m);
+      setDraftCutoffHour(h);
+      setDraftCutoffMin(m);
       setHolidays(hols);
     });
   }, []);
@@ -80,8 +109,8 @@ export default function LeaveSettings() {
   async function handleSaveRules() {
     setSavingRules(true);
     try {
-      const updated = await updateLeaveRules({ casual_advance_notice: draftNotice });
-      const n = updated.casual_advance_notice ?? draftNotice;
+      const updated = await updateLeaveRules({ earned_advance_notice: draftNotice });
+      const n = updated.earned_advance_notice ?? draftNotice;
       setNotice(n);
       setDraftNotice(n.map(r => ({ ...r })));
       setEditingRules(false);
@@ -93,6 +122,31 @@ export default function LeaveSettings() {
   function handleCancelRules() {
     setDraftNotice(notice.map(r => ({ ...r })));
     setEditingRules(false);
+  }
+
+  async function handleSaveCutoff() {
+    setSavingCutoff(true);
+    try {
+      const updated = await updateLeaveRules({
+        sick_and_casual_cutoff_hour: draftCutoffHour,
+        sick_and_casual_cutoff_min: draftCutoffMin,
+      });
+      const h = updated.sick_and_casual_cutoff_hour ?? draftCutoffHour;
+      const m = updated.sick_and_casual_cutoff_min ?? draftCutoffMin;
+      setCutoffHour(h);
+      setCutoffMin(m);
+      setDraftCutoffHour(h);
+      setDraftCutoffMin(m);
+      setEditingCutoff(false);
+    } finally {
+      setSavingCutoff(false);
+    }
+  }
+
+  function handleCancelCutoff() {
+    setDraftCutoffHour(cutoffHour);
+    setDraftCutoffMin(cutoffMin);
+    setEditingCutoff(false);
   }
 
   function updateDraftRow(i, field, value) {
@@ -112,9 +166,9 @@ export default function LeaveSettings() {
   }
 
   function noticeRuleLabel(rule) {
-    if (rule.max == null) return `${rule.min}+ days`;
-    if (rule.min === rule.max) return `${rule.min} day${rule.min === 1 ? "" : "s"}`;
-    return `${rule.min}–${rule.max} days`;
+    if (rule.max == null) return `${rule.min}+ working days`;
+    if (rule.min === rule.max) return `${rule.min} working day${rule.min === 1 ? "" : "s"}`;
+    return `${rule.min}–${rule.max} working days`;
   }
 
   async function handleAddHoliday() {
@@ -179,6 +233,7 @@ export default function LeaveSettings() {
 
         {/* Left column — policy cards */}
         <div className="space-y-8">
+
           {/* Leave Limits */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-5">
@@ -200,37 +255,50 @@ export default function LeaveSettings() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              {Object.entries(limits).map(([key]) => (
-                <div key={key} className="bg-slate-50 rounded-xl p-4">
-                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                    {key.charAt(0).toUpperCase() + key.slice(1)} Leave
-                  </p>
-                  {editingLimits ? (
-                    <input
-                      type="number"
-                      min={0}
-                      value={draftLimits[key] ?? ""}
-                      onChange={(e) =>
-                        setDraftLimits((prev) => ({ ...prev, [key]: parseInt(e.target.value) || 0 }))
-                      }
-                      className="w-full text-[22px] font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <p className="text-[32px] font-bold text-slate-900 leading-none">
-                      {limits[key]}
-                      <span className="text-[14px] font-normal text-slate-400 ml-1.5">days / year</span>
+            <div className="grid grid-cols-2 gap-3">
+              {LEAVE_TYPES.map(({ key, label }) => {
+                const isLwp = key === "lwp";
+                const val = limits[key];
+                const draftVal = draftLimits[key];
+                return (
+                  <div
+                    key={key}
+                    className={`rounded-xl p-4 ${isLwp ? "col-span-2 bg-slate-50/50 border border-dashed border-slate-200" : "bg-slate-50"}`}
+                  >
+                    <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      {label}
                     </p>
-                  )}
-                </div>
-              ))}
+                    {isLwp ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[20px] font-bold text-slate-400">No cap</span>
+                        <span className="text-[11px] text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">unlimited</span>
+                      </div>
+                    ) : editingLimits ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={draftVal ?? ""}
+                        onChange={(e) =>
+                          setDraftLimits((prev) => ({ ...prev, [key]: parseInt(e.target.value) || 0 }))
+                        }
+                        className="w-full text-[22px] font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p className="text-[32px] font-bold text-slate-900 leading-none">
+                        {val}
+                        <span className="text-[14px] font-normal text-slate-400 ml-1.5">days / year</span>
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* Casual Leave Notice Rules */}
+          {/* Earned Leave Notice Rules */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-5">
-              <SectionTitle>Casual Leave Notice Requirements</SectionTitle>
+              <SectionTitle>Earned Leave Notice Requirements</SectionTitle>
               {!editingRules ? (
                 <Button variant="secondary" size="sm" onClick={() => setEditingRules(true)}>
                   <Pencil size={13} />
@@ -278,17 +346,17 @@ export default function LeaveSettings() {
                       onChange={(e) => updateDraftRow(i, "notice", parseInt(e.target.value) || 0)}
                       className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <span className="text-[12px] text-slate-400 flex-1 shrink-0">days notice</span>
+                    <span className="text-[12px] text-slate-400 flex-1 shrink-0">cal. days notice</span>
                     <button onClick={() => removeDraftRow(i)} className="text-slate-300 hover:text-red-500 transition-colors ml-1">
                       <Trash2 size={14} />
                     </button>
                   </div>
                 ) : (
                   <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-3">
-                    <span className="text-[13.5px] font-medium text-slate-700">{noticeRuleLabel(rule)} leave</span>
+                    <span className="text-[13.5px] font-medium text-slate-700">{noticeRuleLabel(rule)}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[13.5px] font-semibold text-slate-900">{rule.notice}</span>
-                      <span className="text-[12px] text-slate-400 w-20">days notice</span>
+                      <span className="text-[12px] text-slate-400 w-28">calendar days notice</span>
                     </div>
                   </div>
                 )
@@ -303,6 +371,67 @@ export default function LeaveSettings() {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Sick & Casual Auto-Approve Cutoff */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <SectionTitle>Sick & Casual Auto-Approve Cutoff</SectionTitle>
+              </div>
+              {!editingCutoff ? (
+                <Button variant="secondary" size="sm" onClick={() => setEditingCutoff(true)}>
+                  <Pencil size={13} />
+                  Edit
+                </Button>
+              ) : (
+                <div className="flex gap-2">
+                  <Button variant="secondary" size="sm" onClick={handleCancelCutoff} disabled={savingCutoff}>
+                    Cancel
+                  </Button>
+                  <Button variant="primary" size="sm" onClick={handleSaveCutoff} disabled={savingCutoff}>
+                    {savingCutoff ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <p className="text-[12.5px] text-slate-500 mb-4">
+              Same-day Sick & Casual leave submitted before this time is auto-approved. After the cutoff, it goes through the normal approval chain.
+            </p>
+
+            {editingCutoff ? (
+              <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3">
+                <Clock size={15} className="text-slate-400 shrink-0" />
+                <span className="text-[13px] text-slate-500 shrink-0">Auto-approve before</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={draftCutoffHour}
+                  onChange={(e) => setDraftCutoffHour(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className="w-16 text-[15px] font-bold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-[16px] font-bold text-slate-400">:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={String(draftCutoffMin).padStart(2, "0")}
+                  onChange={(e) => setDraftCutoffMin(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className="w-16 text-[15px] font-bold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-[12px] text-slate-400">(24-hour)</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-4">
+                <Clock size={15} className="text-slate-400 shrink-0" />
+                <span className="text-[13px] text-slate-500">Auto-approve before</span>
+                <span className="text-[24px] font-bold text-slate-900 leading-none">
+                  {formatCutoff(cutoffHour, cutoffMin)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from core.config import settings
-from core.digest import send_morning_digest
+from core.scheduled_tasks import reset_annual_leave_counts, reset_daily_statuses, send_morning_digest
 from db.database import Base, SessionLocal, engine
 from routes import auth, users, leaves, catchups, slack_bot, dashboard, admin
 
@@ -26,10 +26,8 @@ def _migrate():
     with engine.connect() as conn:
         users_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         for col, definition in [
-            ("sick_leaves_taken",   "INTEGER NOT NULL DEFAULT 0"),
-            ("casual_leaves_taken", "INTEGER NOT NULL DEFAULT 0"),
-            ("stepping_out_from",   "TIME"),
-            ("stepping_out_to",     "TIME"),
+            ("stepping_out_from", "TIME"),
+            ("stepping_out_to",   "TIME"),
         ]:
             if col not in users_cols:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {definition}"))
@@ -96,6 +94,8 @@ _migrate()
 @asynccontextmanager
 async def lifespan(app):
     scheduler = AsyncIOScheduler()
+    scheduler.add_job(reset_annual_leave_counts, CronTrigger(month=1, day=1, hour=0, minute=0))
+    scheduler.add_job(reset_daily_statuses, CronTrigger(hour=6, minute=0))
     scheduler.add_job(send_morning_digest, CronTrigger(hour=8, minute=0))
     scheduler.start()
 

@@ -15,15 +15,21 @@ export const updateStatus = (data) => api.patch("/users/me/status", data).then(r
 
 // Dashboard
 export const getDashboardSummary = () => api.get("/dashboard/summary").then(r => r.data);
+export const getCalendarEvents = (start, end) =>
+  api.get("/dashboard/calendar", { params: { start, end } }).then(r => r.data);
 
 // Leaves
 export const getMyLeaves = () => api.get("/leaves/me").then(r => r.data);
 export const getTeamLeaves = () => api.get("/leaves").then(r => r.data);
+export const getTeamAllLeaves = () => api.get("/leaves/team").then(r => r.data);
 export const getManagerLeaves = () => api.get("/leaves/manager/me").then(r => r.data);
 export const createLeave = (data) => api.post("/leaves", data).then(r => r.data);
 export const approveLeave = (id) => api.patch(`/leaves/${id}/approve`).then(r => r.data);
 export const rejectLeave = (id, reason) => api.patch(`/leaves/${id}/reject`, { reason }).then(r => r.data);
 export const deleteLeave = (id) => api.delete(`/leaves/${id}`);
+export const updateLeave = (id, data) => api.put(`/leaves/${id}`, data).then(r => r.data);
+export const getLeaveBalances = () => api.get("/leaves/me/balances").then(r => r.data);
+export const getUserBalances = (id) => api.get(`/leaves/${id}/balances`).then(r => r.data);
 export const getHolidays = () => api.get("/leaves/holidays").then(r => r.data);
 export const getLeaveLimits = () => api.get("/leaves/limits").then(r => r.data);
 export const getLeaveRules = () => api.get("/leaves/rules").then(r => r.data);

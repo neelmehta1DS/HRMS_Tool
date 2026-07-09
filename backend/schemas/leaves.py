@@ -41,8 +41,20 @@ class LeaveCreate(BaseModel):
     is_exception: bool = False
 
 
+class LeaveUpdate(BaseModel):
+    note: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+
 class LeaveRejectRequest(BaseModel):
     reason: str
+
+
+class LeaveBalanceEntry(BaseModel):
+    taken: int
+    limit: Optional[int]
+    remaining: Optional[int]  # None when limit is null (LWP)
 
 
 class LeaveResponse(LeaveBase):
@@ -53,6 +65,7 @@ class LeaveResponse(LeaveBase):
     status: LeaveStatus
     approvals: list[LeaveApprovalResponse] = []
     over_limit: bool = False
+    user_balances: Optional[dict[str, LeaveBalanceEntry]] = None
 
     created_at: datetime
 

@@ -53,10 +53,6 @@ class User(Base):
     stepping_out_from: Mapped[Optional[time]] = mapped_column(Time, default=None)
     stepping_out_to: Mapped[Optional[time]] = mapped_column(Time, default=None)
 
-    # Leave balances (weekdays only)
-    sick_leaves_taken: Mapped[int] = mapped_column(default=0)
-    casual_leaves_taken: Mapped[int] = mapped_column(default=0)
-
     is_admin: Mapped[bool] = mapped_column(default=False)
 
     birthday: Mapped[Optional[date]] = mapped_column(Date, default=None)

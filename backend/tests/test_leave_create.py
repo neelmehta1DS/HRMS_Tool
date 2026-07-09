@@ -1,50 +1,83 @@
-from datetime import date, timedelta
+from contextlib import contextmanager
+from datetime import date
+from unittest.mock import patch, MagicMock
 
-from models.leaves import Leave, LeaveApproval, LeaveType, LeaveStatus, ApprovalStatus
+from models.leaves import Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus
+from tests.helpers import future_working_date as _future, next_working_day
 
-
-def _future(days=30):
-    return str(date.today() + timedelta(days=days))
+# Sick leave must start "today", and a leave with no working days is rejected.
+# Pin the route's notion of today to a working day so these tests don't fail
+# on weekends and holidays.
+WORKING_TODAY = next_working_day(date.today())
 
 
 def _today():
-    return str(date.today())
+    return str(WORKING_TODAY)
+
+
+def _future_date(days=30) -> date:
+    """Same day as _future(days), as a date object for seeding rows directly."""
+    return date.fromisoformat(_future(days))
+
+
+def _mock_before_cutoff():
+    """Return a mock datetime.now() that reports 9:00 AM (before 10 AM cutoff)."""
+    m = MagicMock()
+    m.hour = 9
+    m.minute = 0
+    return m
+
+
+@contextmanager
+def _before_cutoff_on_a_working_day():
+    """Freeze the route at 9:00 AM on WORKING_TODAY."""
+    with patch("routes.leaves.datetime") as mock_dt, patch("routes.leaves.date") as mock_date:
+        mock_dt.now.return_value = _mock_before_cutoff()
+        mock_date.today.return_value = WORKING_TODAY
+        yield
 
 
 # ---------------------------------------------------------------------------
-# Sick leave
+# Sick & Casual leave
 # ---------------------------------------------------------------------------
 
-def test_sick_leave_auto_approved(client_as, ic):
-    resp = client_as(ic).post("/leaves", json={
-        "leave_type": "sick",
-        "note": "Not feeling well",
-        "start_date": _today(),
-    })
+def test_sick_and_casual_auto_approved(client_as, ic):
+    with _before_cutoff_on_a_working_day():
+        resp = client_as(ic).post("/leaves", json={
+            "leave_type": "sick_and_casual",
+            "note": "Not feeling well",
+            "start_date": _today(),
+        })
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "approved"
     assert data["approvals"] == []
 
 
-def test_sick_leave_increments_balance(client_as, ic, db):
-    client_as(ic).post("/leaves", json={
-        "leave_type": "sick",
-        "note": "Sick day",
-        "start_date": _today(),
-    })
-    db.refresh(ic)
-    assert ic.sick_leaves_taken == 1
+def test_sick_and_casual_increments_balance(client_as, ic, db):
+    with _before_cutoff_on_a_working_day():
+        client_as(ic).post("/leaves", json={
+            "leave_type": "sick_and_casual",
+            "note": "Sick day",
+            "start_date": _today(),
+        })
+
+    bal = db.query(LeaveBalance).filter_by(
+        user_id=ic.id,
+        leave_type=LeaveType.sick_and_casual,
+        year=WORKING_TODAY.year,
+    ).first()
+    assert bal is not None
+    assert bal.days_taken == 1
 
 
 # ---------------------------------------------------------------------------
-# Casual leave — approval row creation
+# Earned leave — approval row creation
 # ---------------------------------------------------------------------------
 
-def test_casual_two_level_chain_creates_two_approval_rows(client_as, ic, manager, skip_manager):
-    # ic has manager (step 1) and skip_manager (step 2)
+def test_earned_two_level_chain_creates_two_approval_rows(client_as, ic, manager, skip_manager):
     resp = client_as(ic).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Holiday",
         "start_date": _future(30),
     })
@@ -61,10 +94,9 @@ def test_casual_two_level_chain_creates_two_approval_rows(client_as, ic, manager
     assert approvals[1]["status"] == "pending"
 
 
-def test_casual_single_manager_creates_one_approval_row(client_as, manager, skip_manager):
-    # manager's only approver is skip_manager; skip_manager has no manager above
+def test_earned_single_manager_creates_one_approval_row(client_as, manager, skip_manager):
     resp = client_as(manager).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Day off",
         "start_date": _future(30),
     })
@@ -76,10 +108,9 @@ def test_casual_single_manager_creates_one_approval_row(client_as, manager, skip
     assert data["approvals"][0]["approver"]["id"] == skip_manager.id
 
 
-def test_casual_no_manager_auto_approved(client_as, skip_manager):
-    # skip_manager has no manager above them — auto-approved
+def test_earned_no_manager_auto_approved(client_as, skip_manager):
     resp = client_as(skip_manager).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Vacation",
         "start_date": _future(30),
     })
@@ -94,9 +125,8 @@ def test_casual_no_manager_auto_approved(client_as, skip_manager):
 # ---------------------------------------------------------------------------
 
 def test_exception_with_skip_manager_routes_to_step2_only(client_as, ic, skip_manager):
-    # ic has a skip_manager — exception leave goes directly to them
     resp = client_as(ic).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Emergency",
         "start_date": _future(5),
         "is_exception": True,
@@ -110,9 +140,8 @@ def test_exception_with_skip_manager_routes_to_step2_only(client_as, ic, skip_ma
 
 
 def test_exception_without_skip_manager_falls_back_to_direct_manager(client_as, manager, skip_manager):
-    # manager has no skip manager — exception falls back to single-step with skip_manager
     resp = client_as(manager).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Emergency",
         "start_date": _future(5),
         "is_exception": True,
@@ -132,16 +161,16 @@ def test_exception_without_skip_manager_falls_back_to_direct_manager(client_as, 
 def test_rejected_leave_does_not_block_new_request(client_as, ic, db):
     db.add(Leave(
         user_id=ic.id,
-        leave_type=LeaveType.casual,
+        leave_type=LeaveType.earned,
         note="old",
-        start_date=date.today() + timedelta(days=30),
-        end_date=date.today() + timedelta(days=30),
+        start_date=_future_date(30),
+        end_date=_future_date(30),
         status=LeaveStatus.rejected,
     ))
     db.commit()
 
     resp = client_as(ic).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Try again",
         "start_date": _future(30),
     })
@@ -151,10 +180,10 @@ def test_rejected_leave_does_not_block_new_request(client_as, ic, db):
 def test_pending_leave_blocks_overlapping_request(client_as, ic, manager, db):
     existing = Leave(
         user_id=ic.id,
-        leave_type=LeaveType.casual,
+        leave_type=LeaveType.earned,
         note="existing",
-        start_date=date.today() + timedelta(days=30),
-        end_date=date.today() + timedelta(days=30),
+        start_date=_future_date(30),
+        end_date=_future_date(30),
         status=LeaveStatus.pending,
     )
     db.add(existing)
@@ -163,7 +192,7 @@ def test_pending_leave_blocks_overlapping_request(client_as, ic, manager, db):
     db.commit()
 
     resp = client_as(ic).post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Duplicate",
         "start_date": _future(30),
     })

@@ -1,13 +1,12 @@
-from datetime import date, timedelta
+from datetime import date
+
+from models.leaves import LeaveBalance, LeaveType
+from tests.helpers import future_working_date as _future
 
 
-def _future(days=30):
-    return str(date.today() + timedelta(days=days))
-
-
-def _create_casual_leave(client, start_days=30):
+def _create_earned_leave(client, start_days=30):
     resp = client.post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Taking time off",
         "start_date": _future(start_days),
     })
@@ -21,7 +20,7 @@ def _create_casual_leave(client, start_days=30):
 # ---------------------------------------------------------------------------
 
 def test_single_step_approve_sets_leave_approved(client_as, manager, skip_manager):
-    leave = _create_casual_leave(client_as(manager))
+    leave = _create_earned_leave(client_as(manager))
 
     resp = client_as(skip_manager).patch(f"/leaves/{leave['id']}/approve")
 
@@ -31,12 +30,17 @@ def test_single_step_approve_sets_leave_approved(client_as, manager, skip_manage
     assert data["approvals"][0]["status"] == "approved"
 
 
-def test_single_step_approve_increments_casual_balance(client_as, manager, skip_manager, db):
-    leave = _create_casual_leave(client_as(manager))
+def test_single_step_approve_increments_earned_balance(client_as, manager, skip_manager, db):
+    leave = _create_earned_leave(client_as(manager))
     client_as(skip_manager).patch(f"/leaves/{leave['id']}/approve")
 
-    db.refresh(manager)
-    assert manager.casual_leaves_taken == 1
+    bal = db.query(LeaveBalance).filter_by(
+        user_id=manager.id,
+        leave_type=LeaveType.earned,
+        year=date.today().year,
+    ).first()
+    assert bal is not None
+    assert bal.days_taken == 1
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +49,7 @@ def test_single_step_approve_increments_casual_balance(client_as, manager, skip_
 
 def test_step1_approve_leaves_leave_pending(client_as, ic, manager, skip_manager):
     """Step 1 approval alone should not mark the leave as approved."""
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     resp = client_as(manager).patch(f"/leaves/{leave['id']}/approve")
 
@@ -58,7 +62,7 @@ def test_step1_approve_leaves_leave_pending(client_as, ic, manager, skip_manager
 
 
 def test_full_two_step_approval_sets_leave_approved(client_as, ic, manager, skip_manager):
-    leave_id = _create_casual_leave(client_as(ic))["id"]
+    leave_id = _create_earned_leave(client_as(ic))["id"]
 
     client_as(manager).patch(f"/leaves/{leave_id}/approve")      # step 1
     resp = client_as(skip_manager).patch(f"/leaves/{leave_id}/approve")  # step 2
@@ -73,7 +77,7 @@ def test_full_two_step_approval_sets_leave_approved(client_as, ic, manager, skip
 
 def test_wrong_approver_returns_403(client_as, ic, skip_manager):
     """Skip manager cannot approve step 1 — it belongs to the direct manager."""
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     resp = client_as(skip_manager).patch(f"/leaves/{leave['id']}/approve")
 
@@ -81,7 +85,7 @@ def test_wrong_approver_returns_403(client_as, ic, skip_manager):
 
 
 def test_approve_already_resolved_leave_returns_409(client_as, manager, skip_manager):
-    leave_id = _create_casual_leave(client_as(manager))["id"]
+    leave_id = _create_earned_leave(client_as(manager))["id"]
     client_as(skip_manager).patch(f"/leaves/{leave_id}/approve")   # fully approve
 
     resp = client_as(skip_manager).patch(f"/leaves/{leave_id}/approve")  # try again

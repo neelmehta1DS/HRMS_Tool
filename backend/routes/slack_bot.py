@@ -13,8 +13,11 @@ from models.leaves import Leave, LeaveApproval, LeaveType, LeaveStatus, Approval
 from models.users import User
 from core.config import settings
 from db.database import get_db
-from routes.leaves import count_weekdays, working_days_until, add_working_days
-from core.leave_limits import LEAVE_RULES, get_notice_days
+from routes.leaves import (
+    count_weekdays, add_working_days, ensure_working_days,
+    get_or_create_balance, enforce_leave_limit,
+)
+from core.leave_limits import LEAVE_RULES, get_earned_notice_days
 
 router = APIRouter(prefix="/bot", tags=["slack-bot"])
 
@@ -39,8 +42,6 @@ def _bot_user_response(user: User) -> BotUserResponse:
         role=user.role,
         role_level=user.role_level,
         slack_user_id=user.slack_user_id,
-        sick_taken=user.sick_leaves_taken,
-        casual_taken=user.casual_leaves_taken,
         l1_manager=_manager_info(l1),
         l2_manager=_manager_info(l2),
     )
@@ -77,23 +78,38 @@ def create_leave_for_user(
     if end < start:
         raise HTTPException(status_code=422, detail="end_date cannot be before start_date")
 
+    days = ensure_working_days(start, end)
+
     today = date.today()
-    if body.leave_type == LeaveType.sick:
-        if start != today or end != today:
-            raise HTTPException(status_code=422, detail="Sick leave can only be applied for today.")
-    elif body.leave_type == LeaveType.casual and not user.is_admin:
-        advance = working_days_until(today, start)
-        duration = count_weekdays(start, end)
-        notice_rules = LEAVE_RULES.get("casual_advance_notice", [])
-        min_advance = get_notice_days(duration, notice_rules)
-        if advance < min_advance:
-            earliest = add_working_days(today, min_advance)
+    now = datetime.now()
+
+    if body.leave_type == LeaveType.sick_and_casual:
+        cutoff_hour = LEAVE_RULES.get("sick_and_casual_cutoff_hour", 10)
+        cutoff_min = LEAVE_RULES.get("sick_and_casual_cutoff_min", 0)
+        is_today = (start == today and end == today)
+        before_cutoff = (now.hour * 60 + now.minute) < (cutoff_hour * 60 + cutoff_min)
+        auto_approve = is_today and before_cutoff
+    elif body.leave_type == LeaveType.earned and not user.is_admin:
+        duration = days
+        notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
+        required_notice = get_earned_notice_days(duration, notice_rules)
+        calendar_days_ahead = (start - today).days
+        if calendar_days_ahead < required_notice:
+            earliest = today + timedelta(days=required_notice)
             raise HTTPException(status_code=422,
-                detail=f"Casual leave ({duration} working day{'s' if duration > 1 else ''}) requires {min_advance} working day{'s' if min_advance > 1 else ''} advance notice. Earliest start: {earliest}.")
+                detail=f"Earned leave ({duration} working day{'s' if duration > 1 else ''}) requires "
+                       f"{required_notice} calendar days notice. Earliest start: {earliest}.")
+        auto_approve = False
+    else:
+        auto_approve = False
+
+    if not user.is_admin:
+        enforce_leave_limit(db, user.id, body.leave_type, days, start.year)
 
     manager = user.manager
     skip = manager.manager if manager else None
-    auto_approve = body.leave_type == LeaveType.sick or not manager
+    if not manager:
+        auto_approve = True
 
     leave = Leave(
         user_id=user.id,
@@ -112,11 +128,9 @@ def create_leave_for_user(
             db.add(LeaveApproval(leave_id=leave.id, approver_id=skip.id, step=2))
 
     if auto_approve:
-        days = count_weekdays(start, end)
-        if body.leave_type == LeaveType.sick:
-            user.sick_leaves_taken += days
-        elif body.leave_type == LeaveType.casual:
-            user.casual_leaves_taken += days
+        year = start.year
+        bal = get_or_create_balance(db, user.id, body.leave_type, year)
+        bal.days_taken += days
 
     db.commit()
     db.refresh(leave)
@@ -164,7 +178,7 @@ def approve_leave(
 
     approval_step.status = ApprovalStatus.approved
     approval_step.decided_at = datetime.utcnow()
-    db.flush()  # write the status change before counting remaining pending steps
+    db.flush()
 
     remaining = (
         db.query(LeaveApproval)
@@ -174,11 +188,9 @@ def approve_leave(
     if remaining == 0:
         leave.status = LeaveStatus.approved
         days = count_weekdays(leave.start_date, leave.end_date)
-        leave_user = leave.user
-        if leave.leave_type == LeaveType.sick:
-            leave_user.sick_leaves_taken += days
-        elif leave.leave_type == LeaveType.casual:
-            leave_user.casual_leaves_taken += days
+        year = leave.start_date.year
+        bal = get_or_create_balance(db, leave.user_id, leave.leave_type, year)
+        bal.days_taken += days
 
     db.commit()
     db.refresh(leave)
@@ -240,7 +252,7 @@ def get_team_availability(
     on_leave = [
         {
             "name": l.user.name,
-            "leave_type": str(l.leave_type).capitalize(),
+            "leave_type": str(l.leave_type).replace("_", " ").title(),
             "end_date": str(l.end_date),
         }
         for l in on_leave_records

@@ -4,17 +4,19 @@ from datetime import datetime, timedelta, date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
-from schemas.leaves import LeaveCreate, LeaveResponse, LeaveRejectRequest
-from models.leaves import Leave, LeaveApproval, LeaveType, LeaveStatus, ApprovalStatus
-from models.users import User
+from schemas.leaves import LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest, LeaveBalanceEntry
+from models.leaves import Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus, SPECIAL_LEAVE_TYPES
+from models.users import User, RoleLevel
 from core.security import get_current_user
 from core.holidays import HOLIDAYS, HOLIDAY_DATES
-from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_notice_days
+from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_earned_notice_days
 from core import slack
 from db.database import get_db
 
 router = APIRouter(prefix="/leaves", tags=["leaves"])
 
+
+# ─── Date helpers ─────────────────────────────────────────────────────────────
 
 def count_weekdays(start: date, end: date) -> int:
     count = 0
@@ -26,11 +28,20 @@ def count_weekdays(start: date, end: date) -> int:
     return count
 
 
-def working_days_until(from_date: date, to_date: date) -> int:
-    """Working days strictly between from_date (inclusive) and to_date (exclusive)."""
-    if to_date <= from_date:
-        return 0
-    return count_weekdays(from_date, to_date - timedelta(days=1))
+def ensure_working_days(start: date, end: date) -> int:
+    """Return the leave's working-day count, rejecting leaves that contain none.
+
+    Balances only ever count working days, so a leave made entirely of weekends
+    and holidays would deduct nothing while still routing an approval request
+    to the user's managers.
+    """
+    days = count_weekdays(start, end)
+    if days == 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Leave must include at least one working day. Weekends and company holidays don't count.",
+        )
+    return days
 
 
 def add_working_days(from_date: date, days: int) -> date:
@@ -43,6 +54,68 @@ def add_working_days(from_date: date, days: int) -> date:
             count += 1
     return current
 
+
+def earliest_earned_start(today: date, notice_days: int) -> date:
+    """Return the earliest calendar date that satisfies the notice requirement."""
+    return today + timedelta(days=notice_days)
+
+
+# ─── Balance helpers ───────────────────────────────────────────────────────────
+
+def get_or_create_balance(db: Session, user_id: int, leave_type: LeaveType, year: int) -> LeaveBalance:
+    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=leave_type, year=year).first()
+    if bal is None:
+        bal = LeaveBalance(user_id=user_id, leave_type=leave_type, year=year, days_taken=0)
+        db.add(bal)
+        db.flush()
+    return bal
+
+
+def get_days_taken(db: Session, user_id: int, leave_type: LeaveType, year: int) -> int:
+    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=leave_type, year=year).first()
+    return bal.days_taken if bal else 0
+
+
+# ─── Limit helpers ─────────────────────────────────────────────────────────────
+
+def exceeds_limit(leave_type: LeaveType, taken: int, days: int) -> bool:
+    """True if `days` more working days would push `taken` past the annual limit.
+
+    The single definition of "over limit". A null limit (LWP) never exceeds, and
+    landing exactly on the limit is allowed.
+    """
+    limit = LEAVE_LIMITS.get(str(leave_type))
+    return limit is not None and (taken + days) > limit
+
+
+def would_exceed_limit(db: Session, user_id: int, leave_type: LeaveType, days: int, year: int) -> bool:
+    return exceeds_limit(leave_type, get_days_taken(db, user_id, leave_type, year), days)
+
+
+def enforce_leave_limit(db: Session, user_id: int, leave_type: LeaveType, days: int, year: int) -> None:
+    """Reject a leave that would take the user past their annual allowance.
+
+    Callers are responsible for exempting admins — the rule is the same for
+    everyone else, including users with no manager and exception requests.
+    """
+    taken = get_days_taken(db, user_id, leave_type, year)
+    if not exceeds_limit(leave_type, taken, days):
+        return
+
+    limit = LEAVE_LIMITS[str(leave_type)]
+    remaining = max(0, limit - taken)
+    label = str(leave_type).replace("_", " ").title()
+    day_word = "day" if days == 1 else "days"
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            f"{label} leave limit exceeded: this request is {days} working {day_word}, "
+            f"but you have only {remaining} of {limit} days remaining for {year}."
+        ),
+    )
+
+
+# ─── Info endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/holidays")
 def get_holidays():
@@ -59,8 +132,53 @@ def get_leave_rules():
     return LEAVE_RULES
 
 
+# ─── My balances ──────────────────────────────────────────────────────────────
+
+def compute_balances(db: Session, user_id: int, year: int) -> dict[str, LeaveBalanceEntry]:
+    rows = (
+        db.query(LeaveBalance.leave_type, LeaveBalance.days_taken)
+        .filter_by(user_id=user_id, year=year)
+        .all()
+    )
+    taken_by_type = {str(lt): days for lt, days in rows}
+
+    result = {}
+    for lt in LeaveType:
+        taken = taken_by_type.get(str(lt), 0)
+        limit = LEAVE_LIMITS.get(str(lt))
+        remaining = (limit - taken) if limit is not None else None
+        result[str(lt)] = LeaveBalanceEntry(taken=taken, limit=limit, remaining=remaining)
+    return result
+
+
+@router.get("/me/balances")
+def get_my_balances(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, LeaveBalanceEntry]:
+    return compute_balances(db, current_user.id, datetime.now().year)
+
+
+# Must stay below /me/balances: declared first, "me" would be coerced into
+# user_id and 422.
+@router.get("/{user_id}/balances")
+def get_user_balances(
+    user_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, LeaveBalanceEntry]:
+    if not db.get(User, user_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    return compute_balances(db, user_id, datetime.now().year)
+
+
+# ─── Current / upcoming leaves (dashboard) ────────────────────────────────────
+
 @router.get("", response_model=dict[str, list[LeaveResponse]])
-def get_current_leaves(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def get_current_leaves(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     today = datetime.now().date()
     two_weeks_from_now = today + timedelta(weeks=2)
 
@@ -79,16 +197,13 @@ def get_current_leaves(current_user: Annotated[User, Depends(get_current_user)],
     return {"current": current_leaves, "upcoming": upcoming_leaves}
 
 
-@router.get("/me/balance")
-def get_my_leave_balance(current_user: Annotated[User, Depends(get_current_user)]):
-    return {
-        "sick_taken": current_user.sick_leaves_taken,
-        "casual_taken": current_user.casual_leaves_taken,
-    }
-
+# ─── My leaves ────────────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=dict[str, list[LeaveResponse]])
-def get_my_leaves(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def get_my_leaves(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     today = datetime.now().date()
     uid = current_user.id
 
@@ -119,13 +234,72 @@ def get_my_leaves(current_user: Annotated[User, Depends(get_current_user)], db: 
     return {"pending": pending, "upcoming": upcoming, "rejected": rejected, "previous": previous}
 
 
+# ─── Team leaves (whole org, managers only) ───────────────────────────────────
+
+@router.get("/team", response_model=dict[str, list[LeaveResponse]])
+def get_team_leaves(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if current_user.role_level == RoleLevel.ic:
+        raise HTTPException(status_code=403, detail="Managers only")
+
+    today = datetime.now().date()
+    year = today.year
+
+    pending = db.query(Leave).where(
+        Leave.status == LeaveStatus.pending,
+        Leave.start_date >= today,
+    ).all()
+
+    upcoming = db.query(Leave).where(
+        Leave.status == LeaveStatus.approved,
+        Leave.start_date >= today,
+    ).all()
+
+    rejected = db.query(Leave).where(
+        Leave.status == LeaveStatus.rejected,
+        Leave.start_date >= today,
+    ).all()
+
+    previous = db.query(Leave).where(
+        Leave.status == LeaveStatus.approved,
+        Leave.end_date < today,
+    ).all()
+
+    balance_cache: dict[int, dict[str, LeaveBalanceEntry]] = {}
+
+    def enrich(leaves: list[Leave]) -> list[LeaveResponse]:
+        out = []
+        for leave in leaves:
+            r = LeaveResponse.model_validate(leave)
+            if leave.user_id not in balance_cache:
+                balance_cache[leave.user_id] = compute_balances(db, leave.user_id, year)
+            r.user_balances = balance_cache[leave.user_id]
+            days = count_weekdays(leave.start_date, leave.end_date)
+            entry = r.user_balances.get(str(leave.leave_type))
+            taken = entry.taken if entry else 0
+            r.over_limit = exceeds_limit(leave.leave_type, taken, days)
+            out.append(r)
+        return out
+
+    return {
+        "pending":  enrich(pending),
+        "upcoming": enrich(upcoming),
+        "rejected": enrich(rejected),
+        "previous": enrich(previous),
+    }
+
+
+# ─── Manager view ─────────────────────────────────────────────────────────────
+
 @router.get("/manager/me", response_model=list[LeaveResponse])
-def get_my_leaves_as_manager(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def get_my_leaves_as_manager(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     today = datetime.now().date()
 
-    # For each pending leave, find the lowest pending step number.
-    # Only surface a leave to a manager if their approval row IS that lowest step —
-    # this prevents skip managers from seeing step-2 rows before step-1 is resolved.
     min_pending = (
         db.query(
             LeaveApproval.leave_id,
@@ -154,20 +328,30 @@ def get_my_leaves_as_manager(current_user: Annotated[User, Depends(get_current_u
 
     def with_over_limit(leave: Leave) -> LeaveResponse:
         r = LeaveResponse.model_validate(leave)
-        d = count_weekdays(leave.start_date, leave.end_date)
-        lim = LEAVE_LIMITS.get(str(leave.leave_type))
-        taken = leave.user.sick_leaves_taken if leave.leave_type == LeaveType.sick else leave.user.casual_leaves_taken
-        r.over_limit = lim is not None and (taken + d) > lim
+        year = leave.start_date.year
+        days = count_weekdays(leave.start_date, leave.end_date)
+        r.over_limit = would_exceed_limit(db, leave.user_id, leave.leave_type, days, year)
+        r.user_balances = compute_balances(db, leave.user_id, year)
         return r
 
     return [with_over_limit(l) for l in pending_leaves]
 
 
+# ─── Create leave ─────────────────────────────────────────────────────────────
+
 @router.post("", response_model=LeaveResponse)
-def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def create_leave(
+    leave: LeaveCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     today = date.today()
+    now = datetime.now()
     effective_end = leave.end_date or leave.start_date
     is_admin = current_user.is_admin
+    # Users with no manager (L2 leads) auto-approve their own leaves, so no policy
+    # constraints (notice period, cutoffs, exceptions) apply to them.
+    unconstrained = is_admin or current_user.manager is None
 
     if not is_admin and (not leave.note or not leave.note.strip()):
         raise HTTPException(status_code=422, detail="Note is required.")
@@ -175,41 +359,67 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
     if effective_end < leave.start_date:
         raise HTTPException(status_code=422, detail="End date cannot be before start date.")
 
-    if not is_admin and leave.leave_type == LeaveType.sick:
-        if leave.start_date != today or effective_end != today:
-            raise HTTPException(status_code=422, detail="Sick leave can only be applied for today.")
+    # Applies to every leave type, and to unconstrained users too: an empty
+    # leave is meaningless regardless of who requests it.
+    days = ensure_working_days(leave.start_date, effective_end)
 
-    if leave.leave_type == LeaveType.casual and not is_admin and not leave.is_exception:
-        advance = working_days_until(today, leave.start_date)
-        duration = count_weekdays(leave.start_date, effective_end)
-        notice_rules = LEAVE_RULES.get("casual_advance_notice", [])
-        min_advance = get_notice_days(duration, notice_rules)
-        if advance < min_advance:
-            earliest = add_working_days(today, min_advance)
-            raise HTTPException(status_code=422,
-                detail=f"Casual leave ({duration} working day{'s' if duration > 1 else ''}) requires {min_advance} working day{'s' if min_advance > 1 else ''} advance notice. Earliest start: {earliest}.")
+    # ── Sick & Casual ──────────────────────────────────────────────────────────
+    if leave.leave_type == LeaveType.sick_and_casual:
+        cutoff_hour = LEAVE_RULES.get("sick_and_casual_cutoff_hour", 10)
+        cutoff_min = LEAVE_RULES.get("sick_and_casual_cutoff_min", 0)
+        is_today = (leave.start_date == today and effective_end == today)
+        before_cutoff = (now.hour * 60 + now.minute) < (cutoff_hour * 60 + cutoff_min)
+        auto_approve = is_admin or (is_today and before_cutoff)
 
-    # Overlap check — reject if any non-rejected leave already covers any day in the requested range
+    # ── Earned ────────────────────────────────────────────────────────────────
+    elif leave.leave_type == LeaveType.earned:
+        if not unconstrained and not leave.is_exception:
+            duration = days
+            notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
+            required_notice = get_earned_notice_days(duration, notice_rules)
+            calendar_days_ahead = (leave.start_date - today).days
+            if calendar_days_ahead < required_notice:
+                earliest = today + timedelta(days=required_notice)
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Earned leave ({duration} working day{'s' if duration != 1 else ''}) requires "
+                        f"{required_notice} calendar days notice. Earliest start: {earliest}."
+                    ),
+                )
+        auto_approve = False
+
+    # ── Special types ─────────────────────────────────────────────────────────
+    else:
+        auto_approve = False
+
+    # ── Overlap check ─────────────────────────────────────────────────────────
     overlap = db.query(Leave).filter(
         Leave.user_id == current_user.id,
         Leave.start_date <= effective_end,
         Leave.end_date >= leave.start_date,
         Leave.status != LeaveStatus.rejected,
     ).first()
-    if not is_admin and overlap:
+    if not unconstrained and overlap:
         raise HTTPException(
             status_code=422,
-            detail=f"You already have a leave request covering that period ({overlap.start_date} – {overlap.end_date})."
+            detail=f"You already have a leave request covering that period ({overlap.start_date} – {overlap.end_date}).",
         )
 
-    days = count_weekdays(leave.start_date, effective_end)
-    limit = LEAVE_LIMITS.get(str(leave.leave_type))
-    current_taken = current_user.sick_leaves_taken if leave.leave_type == LeaveType.sick else current_user.casual_leaves_taken
-    over_limit = limit is not None and (current_taken + days) > limit
+    # ── Limit check ───────────────────────────────────────────────────────────
+    # Admins may record over-limit leave; everyone else is hard-blocked, including
+    # users with no manager and exception requests.
+    year = leave.start_date.year
+    if not is_admin:
+        enforce_leave_limit(db, current_user.id, leave.leave_type, days, year)
+    over_limit = would_exceed_limit(db, current_user.id, leave.leave_type, days, year)
 
+    # ── Build approval chain ──────────────────────────────────────────────────
     manager = current_user.manager
     skip = manager.manager if manager else None
-    auto_approve = leave.leave_type == LeaveType.sick or not manager
+
+    if not manager:
+        auto_approve = True  # no manager = auto-approve regardless of type
 
     new_leave = Leave(
         user_id=current_user.id,
@@ -223,14 +433,13 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
     db.add(new_leave)
     db.flush()
 
-    # Build approval rows (all upfront; manager view filters to lowest pending step)
     approval_rows: list[LeaveApproval] = []
     if not auto_approve:
         if leave.is_exception and skip:
-            # Exception with skip manager → only skip manager approves
+            # Exception → only skip manager approves
             approval_rows.append(LeaveApproval(leave_id=new_leave.id, approver_id=skip.id, step=2))
         else:
-            # Normal casual (or exception without a skip manager) → direct manager first
+            # Normal: direct manager first
             approval_rows.append(LeaveApproval(leave_id=new_leave.id, approver_id=manager.id, step=1))
             if skip and not leave.is_exception:
                 approval_rows.append(LeaveApproval(leave_id=new_leave.id, approver_id=skip.id, step=2))
@@ -239,15 +448,21 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
         db.add(ar)
     db.flush()
 
-    date_str = str(new_leave.start_date) if new_leave.start_date == new_leave.end_date else f"{new_leave.start_date} → {new_leave.end_date}"
-    type_label = str(leave.leave_type).capitalize()
+    # ── Update balance if auto-approved ───────────────────────────────────────
+    if auto_approve:
+        bal = get_or_create_balance(db, current_user.id, leave.leave_type, year)
+        bal.days_taken += days
+
+    # ── Slack notifications ───────────────────────────────────────────────────
+    date_str = (
+        str(new_leave.start_date)
+        if new_leave.start_date == new_leave.end_date
+        else f"{new_leave.start_date} → {new_leave.end_date}"
+    )
+    type_label = str(leave.leave_type).replace("_", " ").title()
     day_word = "day" if days == 1 else "days"
 
     if auto_approve:
-        if leave.leave_type == LeaveType.sick:
-            current_user.sick_leaves_taken += days
-        elif leave.leave_type == LeaveType.casual:
-            current_user.casual_leaves_taken += days
         if current_user.slack_user_id:
             slack.dm(current_user.slack_user_id,
                 text=f"Leave #{new_leave.id} auto-approved.",
@@ -255,13 +470,13 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
                     "text": f":white_check_mark: *Leave #{new_leave.id} auto-approved & logged.*\n"
                             f"_{type_label} · {date_str} · {days} working {day_word}._"}}])
     elif leave.is_exception and skip:
-        # Exception: notify user, DM skip manager
         step2_row = approval_rows[0]
         if current_user.slack_user_id:
             slack.dm(current_user.slack_user_id,
                 text=f"Leave #{new_leave.id} submitted as exception.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted as an exception* — {leave.leave_type} · {date_str} · {days} working {day_word}.\n"
+                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted as an exception* — "
+                            f"{type_label} · {date_str} · {days} working {day_word}.\n"
                             f"Awaiting approval from *{skip.name}* (notice rules waived)."}}])
         if skip.slack_user_id:
             msg = slack.dm(skip.slack_user_id, **slack.approver_payload(new_leave, current_user, "Exception — direct approval", days, over_limit))
@@ -269,14 +484,14 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
                 step2_row.slack_channel = msg["channel"]
                 step2_row.slack_ts = msg["ts"]
     else:
-        # Normal casual (or exception falling back to direct manager)
         step1_row = approval_rows[0]
         if current_user.slack_user_id:
             awaiting = f"*{manager.name}*" + (f", then *{skip.name}*." if skip else ".")
             slack.dm(current_user.slack_user_id,
                 text=f"Leave #{new_leave.id} submitted.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted* — {leave.leave_type} · {date_str} · {days} working {day_word}.\n"
+                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted* — "
+                            f"{type_label} · {date_str} · {days} working {day_word}.\n"
                             f"Awaiting approval from {awaiting}"}}])
         if manager.slack_user_id:
             step_label = "Single approval" if not skip else "Step 1 of 2"
@@ -292,13 +507,18 @@ def create_leave(leave: LeaveCreate, current_user: Annotated[User, Depends(get_c
     return response
 
 
+# ─── Approve leave ────────────────────────────────────────────────────────────
+
 @router.patch("/{leave_id}/approve", response_model=LeaveResponse)
-def approve_leave(leave_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def approve_leave(
+    leave_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     leave = db.query(Leave).where(Leave.id == leave_id).first()
     if not leave:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
 
-    # The next actionable step is always the lowest-numbered pending one
     approval_step = (
         db.query(LeaveApproval)
         .where(LeaveApproval.leave_id == leave_id, LeaveApproval.status == ApprovalStatus.pending)
@@ -313,7 +533,7 @@ def approve_leave(leave_id: int, current_user: Annotated[User, Depends(get_curre
 
     approval_step.status = ApprovalStatus.approved
     approval_step.decided_at = datetime.utcnow()
-    db.flush()  # write the status change before counting remaining pending steps
+    db.flush()
 
     remaining = (
         db.query(LeaveApproval)
@@ -327,13 +547,12 @@ def approve_leave(leave_id: int, current_user: Annotated[User, Depends(get_curre
 
     if is_fully_approved:
         leave.status = LeaveStatus.approved
-        if leave.leave_type == LeaveType.sick:
-            user.sick_leaves_taken += days
-        else:
-            user.casual_leaves_taken += days
+        year = leave.start_date.year
+        bal = get_or_create_balance(db, user.id, leave.leave_type, year)
+        bal.days_taken += days
 
     date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
-    type_label = str(leave.leave_type).capitalize()
+    type_label = str(leave.leave_type).replace("_", " ").title()
 
     slack.delete_msg(approval_step.slack_channel, approval_step.slack_ts)
     approval_step.slack_channel = None
@@ -369,8 +588,15 @@ def approve_leave(leave_id: int, current_user: Annotated[User, Depends(get_curre
     return leave
 
 
+# ─── Reject leave ─────────────────────────────────────────────────────────────
+
 @router.patch("/{leave_id}/reject", response_model=LeaveResponse)
-def reject_leave(leave_id: int, body: LeaveRejectRequest, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def reject_leave(
+    leave_id: int,
+    body: LeaveRejectRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     leave = db.query(Leave).where(Leave.id == leave_id).first()
     if not leave:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
@@ -393,7 +619,7 @@ def reject_leave(leave_id: int, body: LeaveRejectRequest, current_user: Annotate
     leave.status = LeaveStatus.rejected
 
     date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
-    type_label = str(leave.leave_type).capitalize()
+    type_label = str(leave.leave_type).replace("_", " ").title()
 
     slack.delete_msg(approval_step.slack_channel, approval_step.slack_ts)
     approval_step.slack_channel = None
@@ -413,8 +639,77 @@ def reject_leave(leave_id: int, body: LeaveRejectRequest, current_user: Annotate
     return leave
 
 
+# ─── Delete / withdraw leave ──────────────────────────────────────────────────
+
+@router.put("/{leave_id}", response_model=LeaveResponse)
+def update_leave(
+    leave_id: int,
+    body: LeaveUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    leave = db.query(Leave).filter(Leave.id == leave_id, Leave.user_id == current_user.id).first()
+    if not leave:
+        raise HTTPException(status_code=404, detail="Leave not found")
+    if leave.status != LeaveStatus.pending:
+        raise HTTPException(status_code=400, detail="Only pending leaves can be edited")
+
+    today = date.today()
+    new_start = body.start_date or leave.start_date
+    new_end = body.end_date or leave.end_date
+
+    if new_end < new_start:
+        raise HTTPException(status_code=422, detail="End date cannot be before start date")
+
+    # Runs whenever either date moves, not just the start date.
+    duration = ensure_working_days(new_start, new_end)
+
+    # Re-validate notice for earned leave if dates changed
+    if leave.leave_type == LeaveType.earned and not leave.is_exception and body.start_date is not None:
+        notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
+        required_notice = get_earned_notice_days(duration, notice_rules)
+        if (new_start - today).days < required_notice:
+            earliest = today + timedelta(days=required_notice)
+            raise HTTPException(
+                status_code=422,
+                detail=f"Earned leave requires {required_notice} calendar days notice. Earliest start: {earliest}.",
+            )
+
+    # Overlap check excluding self
+    overlap = db.query(Leave).filter(
+        Leave.user_id == current_user.id,
+        Leave.id != leave_id,
+        Leave.start_date <= new_end,
+        Leave.end_date >= new_start,
+        Leave.status != LeaveStatus.rejected,
+    ).first()
+    if overlap:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Overlaps with another leave ({overlap.start_date} – {overlap.end_date})",
+        )
+
+    # The edited leave is pending, so its own days are not in days_taken yet and
+    # must not be subtracted from the new duration.
+    if not current_user.is_admin:
+        enforce_leave_limit(db, current_user.id, leave.leave_type, duration, new_start.year)
+
+    if body.note is not None:
+        leave.note = body.note
+    leave.start_date = new_start
+    leave.end_date = new_end
+
+    db.commit()
+    db.refresh(leave)
+    return leave
+
+
 @router.delete("/{leave_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_leave(leave_id: int, current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+def delete_leave(
+    leave_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
     leave = db.query(Leave).where(Leave.id == leave_id, Leave.user_id == current_user.id).first()
     if not leave:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
@@ -423,18 +718,16 @@ def delete_leave(leave_id: int, current_user: Annotated[User, Depends(get_curren
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete a leave that has already started or passed")
 
     if leave.status == LeaveStatus.approved:
+        year = leave.start_date.year
         days = count_weekdays(leave.start_date, leave.end_date)
-        if leave.leave_type == LeaveType.sick:
-            current_user.sick_leaves_taken = max(0, current_user.sick_leaves_taken - days)
-        else:
-            current_user.casual_leaves_taken = max(0, current_user.casual_leaves_taken - days)
+        bal = get_or_create_balance(db, current_user.id, leave.leave_type, year)
+        bal.days_taken = max(0, bal.days_taken - days)
 
-    # Snapshot Slack info from pending approval rows before the cascade delete
     pending_approvals = [a for a in leave.approvals if a.status == ApprovalStatus.pending]
     slack_msgs = [(a.slack_channel, a.slack_ts) for a in pending_approvals if a.slack_channel]
     approver_slack_ids = [a.approver.slack_user_id for a in pending_approvals if a.approver.slack_user_id]
 
-    type_label = str(leave.leave_type).capitalize()
+    type_label = str(leave.leave_type).replace("_", " ").title()
     date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
 
     db.delete(leave)

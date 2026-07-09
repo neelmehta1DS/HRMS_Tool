@@ -18,8 +18,6 @@ class BotUserResponse(BaseModel):
     role: str
     role_level: RoleLevel
     slack_user_id: Optional[str] = None
-    sick_taken: int
-    casual_taken: int
     l1_manager: Optional[BotManagerInfo] = None
     l2_manager: Optional[BotManagerInfo] = None
 

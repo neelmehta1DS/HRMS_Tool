@@ -86,8 +86,13 @@ def _check_no_cycle(user_id: int, new_manager_id: int, db: Session) -> None:
 # ─── Leave limits ─────────────────────────────────────────────────────────────
 
 class LeaveLimitsUpdate(BaseModel):
-    sick: Optional[int] = None
-    casual: Optional[int] = None
+    earned: Optional[int] = None
+    sick_and_casual: Optional[int] = None
+    bereavement: Optional[int] = None
+    marriage: Optional[int] = None
+    maternity: Optional[int] = None
+    paternity: Optional[int] = None
+    lwp: Optional[int] = None
 
 
 @router.put("/leaves/limits")
@@ -95,10 +100,10 @@ def update_limits(
     body: LeaveLimitsUpdate,
     _: Annotated[User, Depends(require_admin)],
 ):
-    if body.sick is not None:
-        LEAVE_LIMITS["sick"] = body.sick
-    if body.casual is not None:
-        LEAVE_LIMITS["casual"] = body.casual
+    for field in ("earned", "sick_and_casual", "bereavement", "marriage", "maternity", "paternity", "lwp"):
+        val = getattr(body, field)
+        if val is not None:
+            LEAVE_LIMITS[field] = val
     persist_leave_limits()
     return LEAVE_LIMITS
 
@@ -111,7 +116,9 @@ class NoticeRule(BaseModel):
     notice: int
 
 class LeaveRulesUpdate(BaseModel):
-    casual_advance_notice: Optional[list[NoticeRule]] = None
+    earned_advance_notice: Optional[list[NoticeRule]] = None
+    sick_and_casual_cutoff_hour: Optional[int] = None
+    sick_and_casual_cutoff_min: Optional[int] = None
 
 
 @router.put("/leaves/rules")
@@ -119,8 +126,12 @@ def update_rules(
     body: LeaveRulesUpdate,
     _: Annotated[User, Depends(require_admin)],
 ):
-    if body.casual_advance_notice is not None:
-        LEAVE_RULES["casual_advance_notice"] = [r.model_dump(exclude_none=True) for r in body.casual_advance_notice]
+    if body.earned_advance_notice is not None:
+        LEAVE_RULES["earned_advance_notice"] = [r.model_dump(exclude_none=True) for r in body.earned_advance_notice]
+    if body.sick_and_casual_cutoff_hour is not None:
+        LEAVE_RULES["sick_and_casual_cutoff_hour"] = body.sick_and_casual_cutoff_hour
+    if body.sick_and_casual_cutoff_min is not None:
+        LEAVE_RULES["sick_and_casual_cutoff_min"] = body.sick_and_casual_cutoff_min
     persist_leave_limits()
     return LEAVE_RULES
 

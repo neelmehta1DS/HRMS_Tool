@@ -22,12 +22,16 @@ import {
 import Avatar from "../components/ui/Avatar";
 import Badge from "../components/ui/Badge";
 import Spinner from "../components/ui/Spinner";
+import TeamCalendar from "../components/dashboard/TeamCalendar";
+import ProfileSidebar from "../components/dashboard/ProfileSidebar";
 import { useUser } from "../contexts/UserContext";
 import {
   getGreeting,
   formatDateShort,
   formatDateTime,
   getUserStatus,
+  statusBadgeProps,
+  LEAVE_TYPE_META,
 } from "../lib/utils";
 import { getDashboardSummary, getUsers, updateStatus, getHolidays } from "../lib/api";
 
@@ -240,14 +244,17 @@ function StatusBar({ user, setUser, isOnLeave }) {
     );
   }
 
+  const statusUnset = !user.office_status || user.office_status === "OUT";
+
   // Setter view
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-5">
       {/* Prompt */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <span className="w-2 h-2 rounded-full bg-amber-400 ring-4 ring-amber-100 shrink-0" />
+        <span className={`w-2 h-2 rounded-full shrink-0 ${statusUnset ? "bg-red-500 ring-4 ring-red-100 animate-pulse" : "bg-amber-400 ring-4 ring-amber-100"}`} />
         <span className="text-[15px] font-semibold text-slate-800">Set your status for today</span>
-        <span className="text-[12.5px] text-slate-400">— this is how your team sees you</span>
+        {statusUnset && <span className="text-[14px] font-semibold text-red-500 bg-red-50 border border-red-200 px-4 py-1.5 rounded-full">Pending</span>}
+        {!statusUnset && <span className="text-[12.5px] text-slate-400">— this is how your team sees you</span>}
       </div>
 
       {/* Segmented control */}
@@ -385,7 +392,7 @@ function EventWidget({ icon: Icon, iconBg, iconColor, title, subtitle, count, ch
             {subtitle && <span className="text-[12px] text-slate-400 font-normal shrink-0">({subtitle})</span>}
           </div>
         </div>
-        {count > 0 && (
+        {count != null && (
           <span className="text-[13px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">
             {count}
           </span>
@@ -474,57 +481,49 @@ function CatchupsWidget({ asEmployee, asManager, currentUserId }) {
   );
 }
 
-function TeamLeavesWidget({ today: todayItems, upcoming: upcomingItems }) {
-  const total = todayItems.length + upcomingItems.length;
+function OnLeaveTodayWidget({ items }) {
   return (
-    <EventWidget icon={CalendarOff} iconBg="bg-amber-100" iconColor="text-amber-600" title="Team Leaves" count={total}>
-      <div className="space-y-3">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-[13px] font-semibold text-slate-500 uppercase tracking-wider">Today</p>
-            <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{todayItems.length}</span>
-          </div>
-          {todayItems.length === 0 ? (
-            <p className="text-[13.5px] text-slate-400">Everyone's in today</p>
-          ) : (
-            <div className="space-y-2.5">
-              {todayItems.map(l => (
-                <div key={l.user_id} className="flex items-center gap-2.5">
-                  <Avatar name={l.name} size="xs" />
-                  <p className="text-[14px] font-medium text-slate-700 flex-1 truncate">{l.name}</p>
-                  <Badge variant={l.leave_type === "sick" ? "red" : "yellow"}>
-                    {l.leave_type === "sick" ? "Sick" : "Casual"}
-                  </Badge>
-                </div>
-              ))}
+    <EventWidget icon={UserX} iconBg="bg-amber-100" iconColor="text-amber-600" title="On Leave Today" count={items.length}>
+      {items.length === 0 ? (
+        <p className="text-[13.5px] text-slate-400">Everyone's in today</p>
+      ) : (
+        <div className="space-y-2.5">
+          {items.map(l => (
+            <div key={l.user_id} className="flex items-center gap-2.5">
+              <Avatar name={l.name} size="xs" />
+              <p className="text-[14px] font-medium text-slate-700 flex-1 truncate">{l.name}</p>
+              <Badge variant="yellow">
+                {LEAVE_TYPE_META[l.leave_type]?.label ?? l.leave_type}
+              </Badge>
             </div>
-          )}
+          ))}
         </div>
-        <div className="border-t border-slate-100 pt-3">
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-[13px] font-semibold text-slate-500 uppercase tracking-wider">Upcoming · next 30 days</p>
-            <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{upcomingItems.length}</span>
-          </div>
-          {upcomingItems.length === 0 ? (
-            <p className="text-[13.5px] text-slate-400">No upcoming leaves</p>
-          ) : (
-            <div className="space-y-2.5">
-              {upcomingItems.map((l, i) => (
-                <div key={`${l.user_id}-${l.start_date}-${i}`} className="flex items-center gap-2.5">
-                  <Avatar name={l.name} size="xs" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-medium text-slate-700 truncate">{l.name}</p>
-                    <p className="text-[12px] text-slate-400">
-                      {formatDateShort(l.start_date)}
-                      {l.end_date !== l.start_date ? ` – ${formatDateShort(l.end_date)}` : ""}
-                    </p>
-                  </div>
-                </div>
-              ))}
+      )}
+    </EventWidget>
+  );
+}
+
+function UpcomingLeavesWidget({ items }) {
+  return (
+    <EventWidget icon={CalendarOff} iconBg="bg-orange-100" iconColor="text-orange-600" title="Upcoming Leaves" subtitle="next 30 days" count={items.length}>
+      {items.length === 0 ? (
+        <p className="text-[13.5px] text-slate-400">No upcoming leaves</p>
+      ) : (
+        <div className="space-y-2.5">
+          {items.map((l, i) => (
+            <div key={`${l.user_id}-${l.start_date}-${i}`} className="flex items-center gap-2.5">
+              <Avatar name={l.name} size="xs" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[14px] font-medium text-slate-700 truncate">{l.name}</p>
+                <p className="text-[12px] text-slate-400">
+                  {formatDateShort(l.start_date)}
+                  {l.end_date !== l.start_date ? ` – ${formatDateShort(l.end_date)}` : ""}
+                </p>
+              </div>
             </div>
-          )}
+          ))}
         </div>
-      </div>
+      )}
     </EventWidget>
   );
 }
@@ -543,11 +542,22 @@ function NeedsYouItem({ iconBg, iconColor, icon: Icon, title, subtitle }) {
   );
 }
 
-function NeedsYouWidget({ pendingApprovalsCount, catchupsAsManager, catchupsAsEmployee }) {
+function NeedsYouWidget({ pendingApprovalsCount, catchupsAsManager, catchupsAsEmployee, statusNotSet }) {
   const allCatchupIds = new Set([...catchupsAsManager.map(c => c.id), ...catchupsAsEmployee.map(c => c.id)]);
   const totalCatchups = allCatchupIds.size;
 
   const items = [];
+
+  if (statusNotSet) {
+    items.push({
+      key: "status",
+      iconBg: "bg-red-100",
+      iconColor: "text-red-600",
+      icon: MapPin,
+      title: "Set your status for today",
+      subtitle: "Your team doesn't know where you're working from",
+    });
+  }
 
   if (pendingApprovalsCount > 0) {
     items.push({
@@ -589,27 +599,32 @@ function NeedsYouWidget({ pendingApprovalsCount, catchupsAsManager, catchupsAsEm
 
 function UpcomingHolidaysWidget({ holidays }) {
   const today = new Date().toISOString().split("T")[0];
-  const cutoff = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const items = (holidays ?? []).filter(h => h.date >= today && h.date <= cutoff);
+  const currentYear = new Date().getFullYear().toString();
+  const items = (holidays ?? []).filter(h => h.date >= today && h.date.startsWith(currentYear));
 
   return (
-    <EventWidget icon={CalendarDays} iconBg="bg-rose-100" iconColor="text-rose-600" title="Upcoming Holidays" subtitle="next 30 days" count={items.length}>
+    <EventWidget icon={CalendarDays} iconBg="bg-red-100" iconColor="text-red-500" title="Upcoming Holidays" count={items.length}>
       {items.length === 0 ? (
-        <p className="text-[13.5px] text-slate-400">No holidays in the next 30 days</p>
+        <p className="text-[13.5px] text-slate-400">No more holidays this year</p>
       ) : (
         <div className="space-y-2.5">
           {items.map(h => {
             const d = new Date(h.date + "T00:00:00");
-            const dayName = d.toLocaleString("en-US", { weekday: "short" });
-            const formatted = d.toLocaleString("en-US", { month: "short", day: "numeric" });
+            const dayName = d.toLocaleString("en-US", { weekday: "long" });
+            const monthShort = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
             return (
-              <div key={h.date} className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-rose-50 flex items-center justify-center shrink-0">
-                  <span className="text-[12px] font-bold text-rose-500">{d.getDate()}</span>
+              <div key={h.date} className="flex items-center gap-3">
+                <div className="w-[35px] shrink-0 rounded-[7px] overflow-hidden border border-slate-200 shadow-sm bg-white">
+                  <div className="bg-red-500 text-white text-[8px] font-bold tracking-wide text-center leading-none py-[3.5px]">
+                    {monthShort}
+                  </div>
+                  <div className="text-[14.5px] font-bold text-slate-800 text-center leading-none py-[3.5px]">
+                    {d.getDate()}
+                  </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[14px] font-medium text-slate-700 truncate">{h.name}</p>
-                  <p className="text-[12px] text-slate-400">{dayName}, {formatted}</p>
+                  <p className="text-[15px] font-medium text-slate-700 truncate">{h.name}</p>
+                  <p className="text-[12px] text-slate-400">{dayName}</p>
                 </div>
               </div>
             );
@@ -632,24 +647,25 @@ const STATUS_FILTERS = [
   { id: "early",  label: "Early finish", Icon: ArrowUpRight, iconColor: "text-[#d97706]" },
 ];
 
-function statusBadgeProps(status) {
-  switch (status) {
-    case "office": return { variant: "green", label: "In Office" };
-    case "wfh":    return { variant: "teal",  label: "WFH" };
-    case "leave":  return { variant: "red",   label: "On Leave" };
-    default:       return { variant: "slate", label: "Status Not Set" };
-  }
-}
-
-function TeamCard({ member, onLeaveIds, isMe }) {
+function TeamCard({ member, onLeaveIds, isMe, onSelect }) {
   const status = getUserStatus(member, onLeaveIds);
   const { variant, label } = statusBadgeProps(status);
   const isOnLeave = status === "leave";
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(member)}
+      onKeyDown={e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(member);
+        }
+      }}
       className={`
         bg-white rounded-xl border border-slate-200 p-5 flex items-center gap-4
-        hover:shadow-md transition-shadow cursor-default
+        hover:shadow-md transition-shadow cursor-pointer text-left
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400
         ${isMe ? "ring-1 ring-blue-200 border-blue-200" : ""}
       `}
     >
@@ -667,6 +683,11 @@ function TeamCard({ member, onLeaveIds, isMe }) {
           {!isOnLeave && member.early_exit_eta && (
             <Badge variant="orange">Early · {member.early_exit_eta.slice(0, 5)}</Badge>
           )}
+          {!isOnLeave && member.stepping_out_from && member.stepping_out_to && (
+            <Badge variant="blue">
+              Out · {member.stepping_out_from.slice(0, 5)} – {member.stepping_out_to.slice(0, 5)}
+            </Badge>
+          )}
         </div>
       </div>
     </div>
@@ -675,6 +696,7 @@ function TeamCard({ member, onLeaveIds, isMe }) {
 
 function TeamSection({ users, summary }) {
   const [filter, setFilter] = useState("all");
+  const [selectedMember, setSelectedMember] = useState(null);
   const { user: currentUser } = useUser();
 
   const onLeaveIds = useMemo(
@@ -747,12 +769,24 @@ function TeamSection({ users, summary }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map(u => (
-          <TeamCard key={u.id} member={u} onLeaveIds={onLeaveIds} isMe={u.id === currentUser.id} />
+          <TeamCard
+            key={u.id}
+            member={u}
+            onLeaveIds={onLeaveIds}
+            isMe={u.id === currentUser.id}
+            onSelect={setSelectedMember}
+          />
         ))}
         {filtered.length === 0 && (
           <p className="col-span-full text-[13px] text-slate-400 py-4">No team members match this filter.</p>
         )}
       </div>
+
+      <ProfileSidebar
+        member={selectedMember}
+        onLeaveIds={onLeaveIds}
+        onClose={() => setSelectedMember(null)}
+      />
     </div>
   );
 }
@@ -831,23 +865,23 @@ export default function Dashboard() {
       </div>
 
       {/* ── Event strip ──
-          Row 1 (lg): Birthdays | Anniversaries | Catchups
-          Row 2 (lg): [gap] On Leave Today | Upcoming Leaves [gap]  ← centered via 6-col grid
+          Row 1 (4 cols): Needs You | On Leave Today | Upcoming Leaves | Upcoming Holidays
+          Row 2 (3 cols): Catchups | Birthdays | Anniversaries
       ── */}
       <div className="mt-8">
         <SectionLabel>What's happening</SectionLabel>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <NeedsYouWidget
             pendingApprovalsCount={summary.pending_approvals_count ?? 0}
             catchupsAsManager={summary.upcoming_catchups_as_manager ?? []}
             catchupsAsEmployee={summary.my_catchups_upcoming ?? []}
+            statusNotSet={!isOnLeave && (!user.office_status || user.office_status === "OUT")}
           />
-          <TeamLeavesWidget
-            today={summary.team_on_leave_today   ?? []}
-            upcoming={summary.team_leaves_upcoming ?? []}
-          />
+          <OnLeaveTodayWidget items={summary.team_on_leave_today ?? []} />
+          <UpcomingLeavesWidget items={summary.team_leaves_upcoming ?? []} />
           <UpcomingHolidaysWidget holidays={holidays} />
-          
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
           <CatchupsWidget
             asEmployee={summary.my_catchups_upcoming ?? []}
             asManager={summary.upcoming_catchups_as_manager ?? []}
@@ -856,6 +890,12 @@ export default function Dashboard() {
           <BirthdaysWidget     items={summary.birthdays_upcoming    ?? []} />
           <AnniversariesWidget items={summary.anniversaries_upcoming ?? []} />
         </div>
+      </div>
+
+      {/* ── Team calendar ── */}
+      <div className="mt-8">
+        <SectionLabel>Team Calendar</SectionLabel>
+        <TeamCalendar />
       </div>
 
       {/* ── Team ── */}

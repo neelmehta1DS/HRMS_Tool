@@ -1,13 +1,9 @@
-from datetime import date, timedelta
+from tests.helpers import future_working_date as _future
 
 
-def _future(days=30):
-    return str(date.today() + timedelta(days=days))
-
-
-def _create_casual_leave(client, start_days=30):
+def _create_earned_leave(client, start_days=30):
     resp = client.post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Time off",
         "start_date": _future(start_days),
     })
@@ -26,7 +22,7 @@ def _manager_queue(client):
 # ---------------------------------------------------------------------------
 
 def test_manager_sees_pending_leave_in_queue(client_as, ic, manager):
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     queue = _manager_queue(client_as(manager))
 
@@ -35,7 +31,7 @@ def test_manager_sees_pending_leave_in_queue(client_as, ic, manager):
 
 def test_skip_manager_does_not_see_leave_while_step1_is_pending(client_as, ic, skip_manager):
     """Step 2 should be invisible to the skip manager until step 1 resolves."""
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     queue = _manager_queue(client_as(skip_manager))
 
@@ -43,7 +39,7 @@ def test_skip_manager_does_not_see_leave_while_step1_is_pending(client_as, ic, s
 
 
 def test_skip_manager_sees_leave_after_step1_approved(client_as, ic, manager, skip_manager):
-    leave_id = _create_casual_leave(client_as(ic))["id"]
+    leave_id = _create_earned_leave(client_as(ic))["id"]
 
     client_as(manager).patch(f"/leaves/{leave_id}/approve")  # resolve step 1
 

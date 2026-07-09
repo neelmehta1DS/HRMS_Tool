@@ -1,13 +1,9 @@
-from datetime import date, timedelta
+from tests.helpers import future_working_date as _future
 
 
-def _future(days=30):
-    return str(date.today() + timedelta(days=days))
-
-
-def _create_casual_leave(client, start_days=30):
+def _create_earned_leave(client, start_days=30):
     resp = client.post("/leaves", json={
-        "leave_type": "casual",
+        "leave_type": "earned",
         "note": "Taking time off",
         "start_date": _future(start_days),
     })
@@ -24,7 +20,7 @@ def _reject(client, leave_id, reason="Not approved"):
 # ---------------------------------------------------------------------------
 
 def test_reject_sets_leave_status_rejected(client_as, manager, skip_manager):
-    leave = _create_casual_leave(client_as(manager))
+    leave = _create_earned_leave(client_as(manager))
 
     resp = _reject(client_as(skip_manager), leave["id"])
 
@@ -33,7 +29,7 @@ def test_reject_sets_leave_status_rejected(client_as, manager, skip_manager):
 
 
 def test_reject_stores_reason_on_approval_row(client_as, manager, skip_manager):
-    leave = _create_casual_leave(client_as(manager))
+    leave = _create_earned_leave(client_as(manager))
 
     resp = _reject(client_as(skip_manager), leave["id"], reason="Too short notice")
 
@@ -47,7 +43,7 @@ def test_reject_stores_reason_on_approval_row(client_as, manager, skip_manager):
 
 def test_reject_at_step1_leaves_step2_approval_untouched(client_as, ic, manager, skip_manager):
     """Rejecting at step 1 should not touch the step 2 row — it stays pending."""
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     resp = _reject(client_as(manager), leave["id"])
 
@@ -63,7 +59,7 @@ def test_reject_at_step1_leaves_step2_approval_untouched(client_as, ic, manager,
 
 def test_wrong_approver_reject_returns_403(client_as, ic, skip_manager):
     """Skip manager cannot reject step 1 — it belongs to the direct manager."""
-    leave = _create_casual_leave(client_as(ic))
+    leave = _create_earned_leave(client_as(ic))
 
     resp = _reject(client_as(skip_manager), leave["id"])
 
@@ -71,7 +67,7 @@ def test_wrong_approver_reject_returns_403(client_as, ic, skip_manager):
 
 
 def test_reject_already_resolved_leave_returns_409(client_as, manager, skip_manager):
-    leave_id = _create_casual_leave(client_as(manager))["id"]
+    leave_id = _create_earned_leave(client_as(manager))["id"]
     _reject(client_as(skip_manager), leave_id)  # first rejection
 
     resp = _reject(client_as(skip_manager), leave_id)  # try again

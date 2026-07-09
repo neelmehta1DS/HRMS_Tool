@@ -5,6 +5,7 @@ const SIZES = {
   sm: { wh: "w-7 h-7", text: "text-[11px]" },
   md: { wh: "w-9 h-9", text: "text-[13px]" },
   lg: { wh: "w-11 h-11", text: "text-[15px]" },
+  xl: { wh: "w-14 h-14", text: "text-[18px]" },
 };
 
 export default function Avatar({ name = "", size = "md" }) {

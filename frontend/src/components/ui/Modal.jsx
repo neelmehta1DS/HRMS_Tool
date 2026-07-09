@@ -8,7 +8,7 @@ const sizes = {
   xl: "max-w-3xl",
 };
 
-export default function Modal({ open, onClose, title, children, size = "md" }) {
+export default function Modal({ open, onClose, title, children, size = "md", panelClassName = "" }) {
   useEffect(() => {
     if (!open) return;
     const handler = (e) => e.key === "Escape" && onClose();
@@ -21,7 +21,7 @@ export default function Modal({ open, onClose, title, children, size = "md" }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
-      <div className={`relative w-full ${sizes[size] ?? sizes.md} bg-white rounded-2xl shadow-xl overflow-hidden`}>
+      <div className={`relative w-full ${sizes[size] ?? sizes.md} bg-white rounded-2xl shadow-xl overflow-hidden ${panelClassName}`}>
         {title && (
           <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
             <h2 className="text-[15px] font-semibold text-slate-900">{title}</h2>

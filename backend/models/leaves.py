@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, func
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, UniqueConstraint, func
 from db.database import Base
 
 if TYPE_CHECKING:
@@ -12,8 +12,22 @@ if TYPE_CHECKING:
 
 
 class LeaveType(StrEnum):
-    sick = "sick"
-    casual = "casual"
+    earned = "earned"
+    sick_and_casual = "sick_and_casual"
+    bereavement = "bereavement"
+    marriage = "marriage"
+    maternity = "maternity"
+    paternity = "paternity"
+    lwp = "lwp"
+
+
+SPECIAL_LEAVE_TYPES = {
+    LeaveType.bereavement,
+    LeaveType.marriage,
+    LeaveType.maternity,
+    LeaveType.paternity,
+    LeaveType.lwp,
+}
 
 
 class LeaveStatus(StrEnum):
@@ -67,3 +81,17 @@ class LeaveApproval(Base):
 
     leave: Mapped["Leave"] = relationship("Leave", back_populates="approvals")
     approver: Mapped["User"] = relationship("User", foreign_keys=[approver_id])
+
+
+class LeaveBalance(Base):
+    __tablename__ = "leave_balances"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    leave_type: Mapped[LeaveType] = mapped_column(Enum(LeaveType))
+    year: Mapped[int] = mapped_column(Integer)
+    days_taken: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "leave_type", "year", name="uq_balance_user_type_year"),
+    )

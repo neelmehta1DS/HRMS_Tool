@@ -129,14 +129,4 @@ def client_as(db):
     app.dependency_overrides.clear()
 
 
-# ---------------------------------------------------------------------------
-# Date helpers
-# ---------------------------------------------------------------------------
-
-def future_date(days: int = 30) -> str:
-    """Return a date string N calendar days from today (satisfies advance-notice rules)."""
-    return str(date.today() + timedelta(days=days))
-
-
-def today_str() -> str:
-    return str(date.today())
+# Date helpers live in tests/helpers.py — they are plain functions, not fixtures.

@@ -1,29 +1,20 @@
 {
   "limits": {
-    "sick": null,
-    "casual": null
+    "earned": 18,
+    "sick_and_casual": 12,
+    "bereavement": 3,
+    "marriage": 10,
+    "maternity": 130,
+    "paternity": 14,
+    "lwp": null
   },
   "rules": {
-    "casual_advance_notice": [
-      {
-        "min": 1,
-        "max": 1,
-        "notice": 3
-      },
-      {
-        "min": 2,
-        "max": 2,
-        "notice": 7
-      },
-      {
-        "min": 3,
-        "max": 3,
-        "notice": 14
-      },
-      {
-        "min": 4,
-        "notice": 30
-      }
-    ]
+    "earned_advance_notice": [
+      { "min": 1, "max": 2, "notice": 14 },
+      { "min": 3, "max": 4, "notice": 21 },
+      { "min": 5, "notice": 30 }
+    ],
+    "sick_and_casual_cutoff_hour": 10,
+    "sick_and_casual_cutoff_min": 0
   }
 }

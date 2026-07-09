@@ -38,7 +38,7 @@ def seed_users(db: Session):
     # L2 LEADS
     # =========================
     ad = upsert_user(db, {
-        "email": "adithya1@1digitalstack.ai",
+        "email": "adithya@1digitalstack.ai",
         "name": "AD",
         "role": "Product Lead",
         "manager_id": None,
@@ -192,7 +192,7 @@ def seed_users(db: Session):
         "email": "neel.mehta@1digitalstack.ai",
         "name": "Neel Mehta",
         "role": "",
-        "manager_id": None,
+        "manager_id": thisya.id,
         "refresh_token": "",
         "slack_user_id": "U0B8UBBTPRT",
         "office_status": None,
@@ -204,7 +204,7 @@ def seed_users(db: Session):
         "email": "vir.dang@1digitalstack.ai",
         "name": "Vir Dang",
         "role": "",
-        "manager_id": Neel.id,
+        "manager_id": thisya.id,
         "refresh_token": "",
         "slack_user_id": "Nothing",
         "office_status": None,
