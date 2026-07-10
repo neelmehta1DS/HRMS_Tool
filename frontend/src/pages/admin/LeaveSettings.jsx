@@ -228,7 +228,14 @@ export default function LeaveSettings() {
   const past = holidays.filter((h) => h.date < today);
 
   return (
-    <div className="p-8">
+    <div>
+      <div className="px-8 pt-7 pb-6 bg-white border-b border-slate-200">
+        <h1 className="text-2xl font-bold text-slate-900">Leave Settings</h1>
+        <p className="text-[13.5px] text-slate-500 mt-1">
+          Leave limits, notice requirements, and the holiday calendar.
+        </p>
+      </div>
+      <div className="p-8">
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,42rem)_1fr] gap-8 items-start">
 
         {/* Left column — policy cards */}
@@ -562,6 +569,7 @@ export default function LeaveSettings() {
         }
         loading={deletingHoliday}
       />
+      </div>
     </div>
   );
 }

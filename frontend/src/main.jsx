@@ -3,11 +3,13 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
 import AuthLayout from "./components/layout/AuthLayout";
+import AdminRoute from "./components/layout/AdminRoute";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Leaves from "./pages/Leaves";
 import Catchups from "./pages/Catchups";
-import Admin from "./pages/Admin";
+import UserHierarchy from "./pages/admin/UserHierarchy";
+import LeaveSettings from "./pages/admin/LeaveSettings";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -18,7 +20,11 @@ createRoot(document.getElementById("root")).render(
           <Route index element={<Dashboard />} />
           <Route path="/leaves" element={<Leaves />} />
           <Route path="/catchups" element={<Catchups />} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/admin" element={<AdminRoute />}>
+            <Route index element={<Navigate to="hierarchy" replace />} />
+            <Route path="hierarchy" element={<UserHierarchy />} />
+            <Route path="leaves" element={<LeaveSettings />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

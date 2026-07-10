@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, CalendarDays, Users, LogOut, Settings } from "lucide-react";
+import { useEffect, useState } from "react";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { LayoutDashboard, CalendarDays, Users, LogOut, Settings, ChevronRight } from "lucide-react";
 import { useUser } from "../../contexts/UserContext";
 import { logout } from "../../lib/api";
 import Avatar from "../ui/Avatar";
@@ -10,9 +11,22 @@ const navItems = [
   { to: "/catchups", icon: Users, label: "Catchups" },
 ];
 
+const adminItems = [
+  { to: "/admin/hierarchy", label: "User Hierarchy" },
+  { to: "/admin/leaves", label: "Leave Settings" },
+];
+
 export default function Sidebar() {
   const { user } = useUser();
   const navigate = useNavigate();
+  const location = useLocation();
+  const onAdminRoute = location.pathname.startsWith("/admin");
+  const [adminOpen, setAdminOpen] = useState(onAdminRoute);
+  // Navigating to an admin page opens the submenu; the user may still close it.
+  useEffect(() => {
+    if (onAdminRoute) setAdminOpen(true);
+  }, [onAdminRoute]);
+  const expanded = adminOpen;
 
   async function handleLogout() {
     try { await logout(); } catch (_) {}
@@ -49,19 +63,47 @@ export default function Sidebar() {
           </NavLink>
         ))}
         {user?.is_admin && (
-          <NavLink
-            to="/admin"
-            className={({ isActive }) =>
-              `flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[15.5px] font-medium transition-colors ${
-                isActive
-                  ? "text-blue-700 bg-blue-50"
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdminOpen((v) => !v)}
+              aria-expanded={expanded}
+              aria-controls="admin-submenu"
+              className={`w-full flex items-center gap-3.5 px-3.5 py-3 rounded-lg text-[15.5px] font-medium transition-colors ${
+                onAdminRoute
+                  ? "text-slate-800 bg-slate-50"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
-              }`
-            }
-          >
-            <Settings size={19} strokeWidth={2} />
-            Admin
-          </NavLink>
+              }`}
+            >
+              <Settings size={19} strokeWidth={2} />
+              <span className="flex-1 text-left">Admin</span>
+              <ChevronRight
+                size={16}
+                strokeWidth={2.5}
+                className={`text-slate-400 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+              />
+            </button>
+
+            {expanded && (
+              <div id="admin-submenu" className="mt-1 ml-4 pl-3.5 border-l border-slate-200 space-y-1">
+                {adminItems.map(({ to, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      `block px-3 py-2.5 rounded-lg text-[14.5px] font-medium transition-colors ${
+                        isActive
+                          ? "text-blue-700 bg-blue-50"
+                          : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                      }`
+                    }
+                  >
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </nav>
 
