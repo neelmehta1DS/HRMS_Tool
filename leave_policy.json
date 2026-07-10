@@ -10,9 +10,20 @@
   },
   "rules": {
     "earned_advance_notice": [
-      { "min": 1, "max": 2, "notice": 14 },
-      { "min": 3, "max": 4, "notice": 21 },
-      { "min": 5, "notice": 30 }
+      {
+        "min": 1,
+        "max": 2,
+        "notice": 14
+      },
+      {
+        "min": 3,
+        "max": 4,
+        "notice": 21
+      },
+      {
+        "min": 5,
+        "notice": 30
+      }
     ],
     "sick_and_casual_cutoff_hour": 10,
     "sick_and_casual_cutoff_min": 0

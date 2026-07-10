@@ -12,6 +12,8 @@ export const logout = () => api.post("/auth/logout").then(r => r.data);
 // Users
 export const getUsers = () => api.get("/users").then(r => r.data);
 export const updateStatus = (data) => api.patch("/users/me/status", data).then(r => r.data);
+export const getStatusHistory = (id, days = 28) =>
+  api.get(`/users/${id}/status-history`, { params: { days } }).then(r => r.data);
 
 // Dashboard
 export const getDashboardSummary = () => api.get("/dashboard/summary").then(r => r.data);
@@ -30,6 +32,8 @@ export const deleteLeave = (id) => api.delete(`/leaves/${id}`);
 export const updateLeave = (id, data) => api.put(`/leaves/${id}`, data).then(r => r.data);
 export const getLeaveBalances = () => api.get("/leaves/me/balances").then(r => r.data);
 export const getUserBalances = (id) => api.get(`/leaves/${id}/balances`).then(r => r.data);
+export const getUserLeaveSummary = (id, days = 28) =>
+  api.get(`/leaves/${id}/summary`, { params: { days } }).then(r => r.data);
 export const getHolidays = () => api.get("/leaves/holidays").then(r => r.data);
 export const getLeaveLimits = () => api.get("/leaves/limits").then(r => r.data);
 export const getLeaveRules = () => api.get("/leaves/rules").then(r => r.data);
@@ -45,6 +49,17 @@ export const deleteCatchup = (id) => api.delete(`/catchups/${id}`);
 // Admin
 export const getAdminUsers = () => api.get("/admin/users").then(r => r.data);
 export const adminUpdateUser = (id, data) => api.patch(`/admin/users/${id}`, data).then(r => r.data);
+export const adminCreateUser = (data) => api.post("/admin/users", data).then(r => r.data);
+export const adminDeleteUser = (id) => api.delete(`/admin/users/${id}`);
+export const getUserOverview = (id) => api.get(`/admin/users/${id}/overview`).then(r => r.data);
+
+export const adminCreateLeave = (userId, data) => api.post(`/admin/users/${userId}/leaves`, data).then(r => r.data);
+export const adminUpdateLeave = (leaveId, data) => api.put(`/admin/leaves/${leaveId}`, data).then(r => r.data);
+export const adminDeleteLeave = (leaveId) => api.delete(`/admin/leaves/${leaveId}`);
+
+export const adminCreateCatchup = (userId, data) => api.post(`/admin/users/${userId}/catchups`, data).then(r => r.data);
+export const adminUpdateCatchup = (id, data) => api.patch(`/admin/catchups/${id}`, data).then(r => r.data);
+export const adminDeleteCatchup = (id) => api.delete(`/admin/catchups/${id}`);
 export const updateLeaveLimits = (data) => api.put("/admin/leaves/limits", data).then(r => r.data);
 export const addHoliday = (data) => api.post("/admin/leaves/holidays", data).then(r => r.data);
 export const updateHoliday = (date, data) => api.put(`/admin/leaves/holidays/${date}`, data).then(r => r.data);

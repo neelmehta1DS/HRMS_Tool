@@ -13,6 +13,7 @@ const navItems = [
 
 const adminItems = [
   { to: "/admin/hierarchy", label: "User Hierarchy" },
+  { to: "/admin/users", label: "User Management" },
   { to: "/admin/leaves", label: "Leave Settings" },
 ];
 

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from db.database import Base, get_db
 from models.users import User
+from models.status_events import StatusEvent  # noqa: F401 — registers the table with Base.metadata
 from core.security import get_current_user
 
 # ---------------------------------------------------------------------------

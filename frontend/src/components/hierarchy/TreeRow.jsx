@@ -3,7 +3,7 @@ import { ChevronRight, GitBranch } from "lucide-react";
 import Avatar from "../ui/Avatar";
 import { ROLE_LABELS } from "./roleMeta";
 
-const INDENT_PX = 30;
+const INDENT_PX = 50;
 
 const TreeRow = forwardRef(function TreeRow(
   { node, depth, expanded, hasChildren, focused, onToggle, onMove, onFocusRow, onKeyDown },

@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Leaves from "./pages/Leaves";
 import Catchups from "./pages/Catchups";
 import UserHierarchy from "./pages/admin/UserHierarchy";
+import UserManagement from "./pages/admin/UserManagement";
 import LeaveSettings from "./pages/admin/LeaveSettings";
 
 createRoot(document.getElementById("root")).render(
@@ -23,6 +24,7 @@ createRoot(document.getElementById("root")).render(
           <Route path="/admin" element={<AdminRoute />}>
             <Route index element={<Navigate to="hierarchy" replace />} />
             <Route path="hierarchy" element={<UserHierarchy />} />
+            <Route path="users" element={<UserManagement />} />
             <Route path="leaves" element={<LeaveSettings />} />
           </Route>
         </Route>

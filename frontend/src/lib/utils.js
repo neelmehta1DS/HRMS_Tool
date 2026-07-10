@@ -59,6 +59,13 @@ export function formatDateLong(s) {
   });
 }
 
+// Status timestamps arrive as naive IST, so parsing them as local is correct.
+export function formatTimeOfDay(s) {
+  return new Date(s).toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit",
+  });
+}
+
 // Birthdays store a year that we never surface.
 export function formatDayMonth(s) {
   return new Date(s + "T00:00:00").toLocaleDateString("en-GB", {

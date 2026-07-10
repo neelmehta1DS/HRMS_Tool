@@ -3,14 +3,18 @@ import { X } from "lucide-react";
 import Avatar from "../ui/Avatar";
 import Badge from "../ui/Badge";
 import Spinner from "../ui/Spinner";
+import CheckInLog from "./CheckInLog";
+import UpcomingLeaves from "./UpcomingLeaves";
 import {
   LEAVE_TYPE_META,
   formatDateLong,
   formatDayMonth,
+  formatTimeOfDay,
   getUserStatus,
   statusBadgeProps,
+  toISODate,
 } from "../../lib/utils";
-import { getUserBalances } from "../../lib/api";
+import { getHolidays, getStatusHistory, getUserBalances, getUserLeaveSummary } from "../../lib/api";
 
 const BALANCE_TYPES = ["earned", "sick_and_casual", "bereavement", "marriage", "maternity", "paternity"];
 
@@ -51,9 +55,16 @@ function BalanceCard({ type, entry }) {
   );
 }
 
+const LOG_DAYS = 28;
+
 export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
   const [balances, setBalances] = useState(null);
   const [failed, setFailed] = useState(false);
+
+  const [statusDays, setStatusDays] = useState(null);
+  const [leaveSummary, setLeaveSummary] = useState(null);
+  const [holidays, setHolidays] = useState(null);
+  const [historyFailed, setHistoryFailed] = useState(false);
 
   useEffect(() => {
     const handler = (e) => e.key === "Escape" && onClose();
@@ -72,9 +83,36 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
     return () => { cancelled = true; };
   }, [member?.id]);
 
+  // A day cannot be classified without all three, so they load and fail as a unit.
+  useEffect(() => {
+    if (!member) return;
+    let cancelled = false;
+    setStatusDays(null);
+    setLeaveSummary(null);
+    setHolidays(null);
+    setHistoryFailed(false);
+    Promise.all([
+      getStatusHistory(member.id, LOG_DAYS),
+      getUserLeaveSummary(member.id, LOG_DAYS),
+      getHolidays(),
+    ])
+      .then(([days, summary, hols]) => {
+        if (cancelled) return;
+        setStatusDays(days);
+        setLeaveSummary(summary);
+        setHolidays(hols);
+      })
+      .catch(() => { if (!cancelled) setHistoryFailed(true); });
+    return () => { cancelled = true; };
+  }, [member?.id]);
+
   if (!member) return null;
 
-  const { variant, label } = statusBadgeProps(getUserStatus(member, onLeaveIds));
+  const status = getUserStatus(member, onLeaveIds);
+  const { variant, label } = statusBadgeProps(status);
+
+  const today = statusDays?.find((d) => d.business_date === toISODate(new Date()));
+  const showClockIn = today && (status === "office" || status === "wfh");
 
   return (
     <div className="fixed inset-0 z-50">
@@ -97,8 +135,13 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
               <p className="text-[13.5px] text-slate-500 mt-0.5 truncate">{member.role}</p>
             </div>
           </div>
-          <div className="mt-4">
+          <div className="mt-4 flex items-center gap-3">
             <Badge variant={variant}>{label}</Badge>
+            {showClockIn && (
+              <span className="text-[12.5px] text-slate-400">
+                Clocked in at {formatTimeOfDay(today.clocked_in_at)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -123,7 +166,7 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
         </div>
 
         {/* Leave balance */}
-        <div className="px-7 py-6">
+        <div className="px-7 py-6 border-b border-slate-100">
           <SectionHeading>Leave Balance · {new Date().getFullYear()}</SectionHeading>
 
           {failed && <p className="text-[13.5px] text-slate-400">Couldn&apos;t load leave balances.</p>}
@@ -144,6 +187,30 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
                 <p className="text-[12px] text-slate-400 mt-0.5">When paid balance is exhausted</p>
               </div>
             </>
+          )}
+        </div>
+
+        {/* Upcoming leaves */}
+        <div className="px-7 py-6 border-b border-slate-100">
+          <SectionHeading>Upcoming Leaves</SectionHeading>
+
+          {historyFailed && <p className="text-[13.5px] text-slate-400">Couldn&apos;t load upcoming leaves.</p>}
+          {!historyFailed && !leaveSummary && <div className="flex justify-center py-6"><Spinner /></div>}
+          {leaveSummary && <UpcomingLeaves leaves={leaveSummary.upcoming} />}
+        </div>
+
+        {/* Check-in log */}
+        <div className="px-7 py-6">
+          <SectionHeading>Check-in Log</SectionHeading>
+
+          {historyFailed && <p className="text-[13.5px] text-slate-400">Couldn&apos;t load the check-in log.</p>}
+          {!historyFailed && !statusDays && <div className="flex justify-center py-6"><Spinner /></div>}
+          {statusDays && leaveSummary && holidays && (
+            <CheckInLog
+              statusDays={statusDays}
+              leaveDates={leaveSummary.leave_dates}
+              holidays={holidays}
+            />
           )}
         </div>
       </div>

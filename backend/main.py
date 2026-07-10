@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from core.config import settings
 from core.scheduled_tasks import reset_annual_leave_counts, reset_daily_statuses, send_morning_digest
+from core.time import IST
 from db.database import Base, SessionLocal, engine
 from routes import auth, users, leaves, catchups, slack_bot, dashboard, admin
 
@@ -94,9 +95,11 @@ _migrate()
 @asynccontextmanager
 async def lifespan(app):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(reset_annual_leave_counts, CronTrigger(month=1, day=1, hour=0, minute=0))
-    scheduler.add_job(reset_daily_statuses, CronTrigger(hour=6, minute=0))
-    scheduler.add_job(send_morning_digest, CronTrigger(hour=8, minute=0))
+    # Pinned to IST rather than inherited from the system clock: on a UTC host
+    # the daily reset would otherwise wipe everyone's status at 11:30 IST.
+    scheduler.add_job(reset_annual_leave_counts, CronTrigger(month=1, day=1, hour=0, minute=0, timezone=IST))
+    scheduler.add_job(reset_daily_statuses, CronTrigger(hour=6, minute=0, timezone=IST))
+    scheduler.add_job(send_morning_digest, CronTrigger(hour=8, minute=0, timezone=IST))
     scheduler.start()
 
     if settings.DEBUG:

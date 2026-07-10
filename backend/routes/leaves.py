@@ -1,15 +1,16 @@
 from typing import Annotated
 from datetime import datetime, timedelta, date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
-from schemas.leaves import LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest, LeaveBalanceEntry
+from schemas.leaves import LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest, LeaveBalanceEntry, LeaveSummaryResponse
 from models.leaves import Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus, SPECIAL_LEAVE_TYPES
 from models.users import User, RoleLevel
 from core.security import get_current_user
 from core.holidays import HOLIDAYS, HOLIDAY_DATES
 from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_earned_notice_days
+from core.workdays import count_weekdays
 from core import slack
 from db.database import get_db
 
@@ -17,16 +18,6 @@ router = APIRouter(prefix="/leaves", tags=["leaves"])
 
 
 # ─── Date helpers ─────────────────────────────────────────────────────────────
-
-def count_weekdays(start: date, end: date) -> int:
-    count = 0
-    current = start
-    while current <= end:
-        if current.weekday() < 5 and current not in HOLIDAY_DATES:
-            count += 1
-        current += timedelta(days=1)
-    return count
-
 
 def ensure_working_days(start: date, end: date) -> int:
     """Return the leave's working-day count, rejecting leaves that contain none.
@@ -170,6 +161,59 @@ def get_user_balances(
     if not db.get(User, user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
     return compute_balances(db, user_id, datetime.now().year)
+
+
+def days_between(start: date, end: date) -> list[date]:
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
+# Must stay below /me/... for the same reason as /{user_id}/balances above.
+@router.get("/{user_id}/summary", response_model=LeaveSummaryResponse)
+def get_user_leave_summary(
+    user_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query(ge=1, le=365)] = 28,
+):
+    """Upcoming leaves, and the leave days falling inside the last `days` days.
+
+    A check-in log needs both: a past day is either a status the person set, or a
+    leave they took, and only the leave explains an otherwise empty square.
+    Pending leaves are excluded — they have not been granted, so they are not
+    upcoming, and they never coloured a past day.
+    """
+    if not db.get(User, user_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+    today = datetime.now().date()
+    window_start = today - timedelta(days=days - 1)
+
+    upcoming = (
+        db.query(Leave)
+        .where(
+            Leave.user_id == user_id,
+            Leave.status == LeaveStatus.approved,
+            Leave.start_date >= today,
+        )
+        .order_by(Leave.start_date)
+        .all()
+    )
+
+    # Any approved leave that overlaps the window at all, clipped to it.
+    overlapping = db.query(Leave).where(
+        Leave.user_id == user_id,
+        Leave.status == LeaveStatus.approved,
+        Leave.start_date <= today,
+        Leave.end_date >= window_start,
+    ).all()
+
+    leave_dates = sorted({
+        day
+        for leave in overlapping
+        for day in days_between(max(leave.start_date, window_start), min(leave.end_date, today))
+    })
+
+    return LeaveSummaryResponse(upcoming=upcoming, leave_dates=leave_dates)
 
 
 # ─── Current / upcoming leaves (dashboard) ────────────────────────────────────

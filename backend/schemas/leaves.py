@@ -70,3 +70,10 @@ class LeaveResponse(LeaveBase):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LeaveSummaryResponse(BaseModel):
+    """What a profile sidebar needs: what is coming, and which past days were leave."""
+
+    upcoming: list[LeaveResponse]     # approved only — a pending leave has not happened
+    leave_dates: list[date]           # every approved leave day inside the window
