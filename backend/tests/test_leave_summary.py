@@ -83,7 +83,7 @@ def test_leave_dates_excludes_pending_leaves(db, ic, client_as):
 
 def test_leave_dates_deduplicates_overlapping_leaves(db, ic, client_as):
     add_leave(db, ic, TODAY - timedelta(days=3), TODAY - timedelta(days=1))
-    add_leave(db, ic, TODAY - timedelta(days=2), TODAY, leave_type=LeaveType.sick_and_casual)
+    add_leave(db, ic, TODAY - timedelta(days=2), TODAY, leave_type=LeaveType.sick)
 
     dates = client_as(ic).get(f"/leaves/{ic.id}/summary").json()["leave_dates"]
     assert len(dates) == len(set(dates)) == 4

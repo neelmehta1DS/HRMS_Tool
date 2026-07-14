@@ -2,10 +2,24 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from models.leaves import LeaveType, LeaveStatus, ApprovalStatus
+from models.leaves import LeaveType, LeaveStatus, ApprovalStatus, REQUESTABLE_LEAVE_TYPES
 from schemas.users import UserResponse
+
+
+def reject_balance_bucket(value: LeaveType) -> LeaveType:
+    """`sick_and_casual` names a shared balance pool, not a leave anyone can take.
+
+    Requests must say which of `sick` or `casual` they are, since the two carry
+    different date rules.
+    """
+    if value not in REQUESTABLE_LEAVE_TYPES:
+        raise ValueError(
+            f"'{value}' is a balance pool, not a requestable leave type. "
+            f"Use 'sick' or 'casual'."
+        )
+    return value
 
 
 class ApproverInfo(BaseModel):
@@ -39,6 +53,8 @@ class LeaveCreate(BaseModel):
     start_date: date
     end_date: Optional[date] = None  # defaults to start_date if omitted
     is_exception: bool = False
+
+    _check_leave_type = field_validator("leave_type")(reject_balance_bucket)
 
 
 class LeaveUpdate(BaseModel):

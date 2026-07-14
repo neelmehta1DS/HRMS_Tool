@@ -23,6 +23,21 @@ function formatHolidayDate(dateStr) {
   });
 }
 
+// Fallbacks only — the server is the source of truth for both ladders. These
+// mirror leave_policy.json so the cards render before the fetch resolves.
+const DEFAULT_EARNED_NOTICE = [
+  { min: 1, max: 2, notice: 14 },
+  { min: 3, max: 4, notice: 21 },
+  { min: 5, max: null, notice: 30 },
+];
+
+const DEFAULT_CASUAL_NOTICE = [
+  { min: 1, max: 1, notice: 3 },
+  { min: 2, max: 2, notice: 7 },
+  { min: 3, max: 3, notice: 14 },
+  { min: 4, max: null, notice: 30 },
+];
+
 function formatCutoff(hour, min) {
   const h = hour % 12 || 12;
   const ampm = hour < 12 ? "AM" : "PM";
@@ -36,21 +51,144 @@ function SectionTitle({ children }) {
   );
 }
 
+function noticeRuleLabel(rule) {
+  if (rule.max == null) return `${rule.min}+ working days`;
+  if (rule.min === rule.max) return `${rule.min} working day${rule.min === 1 ? "" : "s"}`;
+  return `${rule.min}–${rule.max} working days`;
+}
+
+/** An editable notice ladder. Earned and casual each have one; they differ only
+ *  in their brackets, so they share this card rather than two copies of it.
+ *  `onSave(draft)` persists and returns the rules the server actually stored. */
+function NoticeRulesCard({ title, rules, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState(rules);
+
+  // Adopt fresh rules from the server, but never clobber an in-progress edit.
+  useEffect(() => {
+    if (!editing) setDraft(rules.map((r) => ({ ...r })));
+  }, [rules, editing]);
+
+  const updateRow = (i, field, value) =>
+    setDraft((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  const removeRow = (i) => setDraft((prev) => prev.filter((_, idx) => idx !== i));
+
+  const addRow = () =>
+    setDraft((prev) => {
+      const last = prev[prev.length - 1];
+      const newMin = last ? (last.max != null ? last.max + 1 : last.min + 1) : 1;
+      return [...prev, { min: newMin, max: null, notice: 0 }];
+    });
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleCancel() {
+    setDraft(rules.map((r) => ({ ...r })));
+    setEditing(false);
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-6">
+      <div className="flex items-center justify-between mb-5">
+        <SectionTitle>{title}</SectionTitle>
+        {!editing ? (
+          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+            <Pencil size={13} />
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={handleCancel} disabled={saving}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        {(editing ? draft : rules).map((rule, i) =>
+          editing ? (
+            <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-xl px-4 py-2.5">
+              <span className="text-[12px] text-slate-500 shrink-0">From</span>
+              <input
+                type="number"
+                min={1}
+                aria-label={`Bracket ${i + 1} minimum working days`}
+                value={rule.min}
+                onChange={(e) => updateRow(i, "min", parseInt(e.target.value) || 1)}
+                className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-[12px] text-slate-500 shrink-0">to</span>
+              <input
+                type="number"
+                min={rule.min}
+                aria-label={`Bracket ${i + 1} maximum working days`}
+                value={rule.max ?? ""}
+                placeholder="∞"
+                onChange={(e) => updateRow(i, "max", e.target.value === "" ? null : parseInt(e.target.value) || null)}
+                className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-[12px] text-slate-500 shrink-0">days</span>
+              <span className="text-[12px] text-slate-300 mx-1">→</span>
+              <input
+                type="number"
+                min={0}
+                aria-label={`Bracket ${i + 1} calendar days notice`}
+                value={rule.notice}
+                onChange={(e) => updateRow(i, "notice", parseInt(e.target.value) || 0)}
+                className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-[12px] text-slate-400 flex-1 shrink-0">cal. days notice</span>
+              <button onClick={() => removeRow(i)} aria-label={`Remove bracket ${i + 1}`}
+                className="text-slate-300 hover:text-red-500 transition-colors ml-1">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ) : (
+            <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-3">
+              <span className="text-[13.5px] font-medium text-slate-700">{noticeRuleLabel(rule)}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[13.5px] font-semibold text-slate-900">{rule.notice}</span>
+                <span className="text-[12px] text-slate-400 w-28">calendar days notice</span>
+              </div>
+            </div>
+          )
+        )}
+        {editing && (
+          <button
+            onClick={addRow}
+            className="w-full flex items-center justify-center gap-1.5 text-[12px] text-slate-400 hover:text-blue-600 border border-dashed border-slate-200 hover:border-blue-400 rounded-xl py-2.5 transition-colors"
+          >
+            <Plus size={13} />
+            Add bracket
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function LeaveSettings() {
   const [limits, setLimits] = useState({});
   const [draftLimits, setDraftLimits] = useState({});
   const [editingLimits, setEditingLimits] = useState(false);
   const [savingLimits, setSavingLimits] = useState(false);
 
-  const defaultNotice = [
-    { min: 1, max: 2, notice: 14 },
-    { min: 3, max: 4, notice: 21 },
-    { min: 5, max: null, notice: 30 },
-  ];
-  const [notice, setNotice] = useState(defaultNotice);
-  const [draftNotice, setDraftNotice] = useState(defaultNotice);
-  const [editingRules, setEditingRules] = useState(false);
-  const [savingRules, setSavingRules] = useState(false);
+  const [earnedNotice, setEarnedNotice] = useState(DEFAULT_EARNED_NOTICE);
+  const [casualNotice, setCasualNotice] = useState(DEFAULT_CASUAL_NOTICE);
 
   const [cutoffHour, setCutoffHour] = useState(10);
   const [cutoffMin, setCutoffMin] = useState(0);
@@ -76,11 +214,10 @@ export default function LeaveSettings() {
     Promise.all([getLeaveLimits(), getLeaveRules(), getHolidays()]).then(([lim, rules, hols]) => {
       setLimits(lim);
       setDraftLimits({ ...lim });
-      const n = rules.earned_advance_notice ?? defaultNotice;
-      setNotice(n);
-      setDraftNotice(n.map(r => ({ ...r })));
-      const h = rules.sick_and_casual_cutoff_hour ?? 10;
-      const m = rules.sick_and_casual_cutoff_min ?? 0;
+      setEarnedNotice(rules.earned_advance_notice ?? DEFAULT_EARNED_NOTICE);
+      setCasualNotice(rules.casual_advance_notice ?? DEFAULT_CASUAL_NOTICE);
+      const h = rules.sick_cutoff_hour ?? 10;
+      const m = rules.sick_cutoff_min ?? 0;
       setCutoffHour(h);
       setCutoffMin(m);
       setDraftCutoffHour(h);
@@ -106,33 +243,25 @@ export default function LeaveSettings() {
     setEditingLimits(false);
   }
 
-  async function handleSaveRules() {
-    setSavingRules(true);
-    try {
-      const updated = await updateLeaveRules({ earned_advance_notice: draftNotice });
-      const n = updated.earned_advance_notice ?? draftNotice;
-      setNotice(n);
-      setDraftNotice(n.map(r => ({ ...r })));
-      setEditingRules(false);
-    } finally {
-      setSavingRules(false);
-    }
+  async function saveEarnedNotice(draft) {
+    const updated = await updateLeaveRules({ earned_advance_notice: draft });
+    setEarnedNotice(updated.earned_advance_notice ?? draft);
   }
 
-  function handleCancelRules() {
-    setDraftNotice(notice.map(r => ({ ...r })));
-    setEditingRules(false);
+  async function saveCasualNotice(draft) {
+    const updated = await updateLeaveRules({ casual_advance_notice: draft });
+    setCasualNotice(updated.casual_advance_notice ?? draft);
   }
 
   async function handleSaveCutoff() {
     setSavingCutoff(true);
     try {
       const updated = await updateLeaveRules({
-        sick_and_casual_cutoff_hour: draftCutoffHour,
-        sick_and_casual_cutoff_min: draftCutoffMin,
+        sick_cutoff_hour: draftCutoffHour,
+        sick_cutoff_min: draftCutoffMin,
       });
-      const h = updated.sick_and_casual_cutoff_hour ?? draftCutoffHour;
-      const m = updated.sick_and_casual_cutoff_min ?? draftCutoffMin;
+      const h = updated.sick_cutoff_hour ?? draftCutoffHour;
+      const m = updated.sick_cutoff_min ?? draftCutoffMin;
       setCutoffHour(h);
       setCutoffMin(m);
       setDraftCutoffHour(h);
@@ -147,28 +276,6 @@ export default function LeaveSettings() {
     setDraftCutoffHour(cutoffHour);
     setDraftCutoffMin(cutoffMin);
     setEditingCutoff(false);
-  }
-
-  function updateDraftRow(i, field, value) {
-    setDraftNotice(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  }
-
-  function removeDraftRow(i) {
-    setDraftNotice(prev => prev.filter((_, idx) => idx !== i));
-  }
-
-  function addDraftRow() {
-    setDraftNotice(prev => {
-      const last = prev[prev.length - 1];
-      const newMin = last ? (last.max != null ? last.max + 1 : last.min + 1) : 1;
-      return [...prev, { min: newMin, max: null, notice: 0 }];
-    });
-  }
-
-  function noticeRuleLabel(rule) {
-    if (rule.max == null) return `${rule.min}+ working days`;
-    if (rule.min === rule.max) return `${rule.min} working day${rule.min === 1 ? "" : "s"}`;
-    return `${rule.min}–${rule.max} working days`;
   }
 
   async function handleAddHoliday() {
@@ -302,89 +409,23 @@ export default function LeaveSettings() {
             </div>
           </div>
 
-          {/* Earned Leave Notice Rules */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between mb-5">
-              <SectionTitle>Earned Leave Notice Requirements</SectionTitle>
-              {!editingRules ? (
-                <Button variant="secondary" size="sm" onClick={() => setEditingRules(true)}>
-                  <Pencil size={13} />
-                  Edit
-                </Button>
-              ) : (
-                <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" onClick={handleCancelRules} disabled={savingRules}>
-                    Cancel
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={handleSaveRules} disabled={savingRules}>
-                    {savingRules ? "Saving…" : "Save"}
-                  </Button>
-                </div>
-              )}
-            </div>
+          <NoticeRulesCard
+            title="Earned Leave Notice Requirements"
+            rules={earnedNotice}
+            onSave={saveEarnedNotice}
+          />
 
-            <div className="space-y-2">
-              {(editingRules ? draftNotice : notice).map((rule, i) =>
-                editingRules ? (
-                  <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-xl px-4 py-2.5">
-                    <span className="text-[12px] text-slate-500 shrink-0">From</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={rule.min}
-                      onChange={(e) => updateDraftRow(i, "min", parseInt(e.target.value) || 1)}
-                      className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-[12px] text-slate-500 shrink-0">to</span>
-                    <input
-                      type="number"
-                      min={rule.min}
-                      value={rule.max ?? ""}
-                      placeholder="∞"
-                      onChange={(e) => updateDraftRow(i, "max", e.target.value === "" ? null : parseInt(e.target.value) || null)}
-                      className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-[12px] text-slate-500 shrink-0">days</span>
-                    <span className="text-[12px] text-slate-300 mx-1">→</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={rule.notice}
-                      onChange={(e) => updateDraftRow(i, "notice", parseInt(e.target.value) || 0)}
-                      className="w-14 text-[13px] font-semibold text-slate-900 text-center bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-[12px] text-slate-400 flex-1 shrink-0">cal. days notice</span>
-                    <button onClick={() => removeDraftRow(i)} className="text-slate-300 hover:text-red-500 transition-colors ml-1">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ) : (
-                  <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-3">
-                    <span className="text-[13.5px] font-medium text-slate-700">{noticeRuleLabel(rule)}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13.5px] font-semibold text-slate-900">{rule.notice}</span>
-                      <span className="text-[12px] text-slate-400 w-28">calendar days notice</span>
-                    </div>
-                  </div>
-                )
-              )}
-              {editingRules && (
-                <button
-                  onClick={addDraftRow}
-                  className="w-full flex items-center justify-center gap-1.5 text-[12px] text-slate-400 hover:text-blue-600 border border-dashed border-slate-200 hover:border-blue-400 rounded-xl py-2.5 transition-colors"
-                >
-                  <Plus size={13} />
-                  Add bracket
-                </button>
-              )}
-            </div>
-          </div>
+          <NoticeRulesCard
+            title="Casual Leave Notice Requirements"
+            rules={casualNotice}
+            onSave={saveCasualNotice}
+          />
 
-          {/* Sick & Casual Auto-Approve Cutoff */}
+          {/* Sick Auto-Approve Cutoff */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <div className="flex items-center justify-between mb-5">
               <div>
-                <SectionTitle>Sick & Casual Auto-Approve Cutoff</SectionTitle>
+                <SectionTitle>Sick Auto-Approve Cutoff</SectionTitle>
               </div>
               {!editingCutoff ? (
                 <Button variant="secondary" size="sm" onClick={() => setEditingCutoff(true)}>
@@ -404,7 +445,7 @@ export default function LeaveSettings() {
             </div>
 
             <p className="text-[12.5px] text-slate-500 mb-4">
-              Same-day Sick & Casual leave submitted before this time is auto-approved. After the cutoff, it goes through the normal approval chain.
+              Sick leave submitted before this time is auto-approved. After the cutoff it goes through the normal approval chain. Casual leave is never auto-approved.
             </p>
 
             {editingCutoff ? (

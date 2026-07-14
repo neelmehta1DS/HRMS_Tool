@@ -14,9 +14,10 @@ import UserSelect from "../../components/admin/UserSelect";
 import UserFormModal from "../../components/admin/UserFormModal";
 import LeaveFormModal from "../../components/admin/LeaveFormModal";
 import CatchupFormModal from "../../components/admin/CatchupFormModal";
+import { RequestLeaveModal } from "../Leaves";
 import {
   adminDeleteCatchup, adminDeleteLeave, adminDeleteUser,
-  getAdminUsers, getHolidays, getUserOverview,
+  getAdminUsers, getHolidays, getLeaveRules, getUserOverview,
 } from "../../lib/api";
 import {
   LEAVE_TYPE_META, eachDayISO,
@@ -95,6 +96,7 @@ function DetailRow({ label, value }) {
 export default function UserManagement() {
   const [users, setUsers] = useState([]);
   const [holidays, setHolidays] = useState([]);
+  const [leaveRules, setLeaveRules] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // The URL is the source of truth, so refresh, back and a shared link all work.
@@ -124,10 +126,11 @@ export default function UserManagement() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    Promise.all([getAdminUsers(), getHolidays()])
-      .then(([u, h]) => {
+    Promise.all([getAdminUsers(), getHolidays(), getLeaveRules()])
+      .then(([u, h, r]) => {
         setUsers(u);
         setHolidays(h);
+        setLeaveRules(r);
 
         // Only restore someone who still exists: a remembered id can outlive the
         // person, and asking the server for a deleted user just shows an error.
@@ -291,6 +294,7 @@ export default function UserManagement() {
                 <div className="grid grid-cols-2 gap-x-8">
                   <div>
                     <DetailRow label="Email" value={user.email} />
+                    <DetailRow label="Phone" value={user.phone_number} />
                     <DetailRow label="Reports to" value={user.manager?.name} />
                     <DetailRow label="Slack ID" value={user.slack_user_id} />
                   </div>
@@ -330,8 +334,8 @@ export default function UserManagement() {
                   title="Leaves"
                   description="Every leave, past and future. Click a row for the full record."
                   action={
-                    <Button variant="secondary" size="sm" onClick={() => setEditingLeave("new")}>
-                      <Plus size={13} />
+                    <Button variant="primary" size="lg" onClick={() => setEditingLeave("new")}>
+                      <Plus size={15} />
                       Add leave
                     </Button>
                   }
@@ -440,8 +444,22 @@ export default function UserManagement() {
 
       {selectedId && (
         <>
+          {/* New leaves go through the same modal employees use, targeted at this
+              user. Editing an existing leave keeps the admin-only form, which can
+              change type and status. */}
+          <RequestLeaveModal
+            open={editingLeave === "new"}
+            onClose={() => setEditingLeave(null)}
+            onSuccess={() => { setEditingLeave(null); refresh(); }}
+            holidays={holidays}
+            leaveRules={leaveRules}
+            balances={overview?.balances}
+            unconstrained
+            isAdmin
+            adminForUser={user}
+          />
           <LeaveFormModal
-            open={editingLeave !== null}
+            open={editingLeave !== null && editingLeave !== "new"}
             onClose={() => setEditingLeave(null)}
             onSaved={refresh}
             userId={selectedId}

@@ -285,10 +285,19 @@ def test_unapproving_a_leave_returns_the_balance(db, admin, ic, client_as):
 def test_changing_a_leaves_type_moves_the_balance_between_types(db, admin, ic, client_as):
     leave = add_leave(db, ic, date(2026, 3, 9), date(2026, 3, 9))
 
-    client_as(admin).put(f"/admin/leaves/{leave.id}", json={"leave_type": "sick_and_casual"})
+    client_as(admin).put(f"/admin/leaves/{leave.id}", json={"leave_type": "casual"})
 
+    # Casual has no balance row of its own — it lands in the shared pool.
     assert balance(db, ic, LeaveType.earned, 2026) == 0
     assert balance(db, ic, LeaveType.sick_and_casual, 2026) == 1
+
+
+def test_a_leave_cannot_be_retyped_to_the_balance_bucket(db, admin, ic, client_as):
+    leave = add_leave(db, ic, date(2026, 3, 9), date(2026, 3, 9))
+
+    resp = client_as(admin).put(f"/admin/leaves/{leave.id}", json={"leave_type": "sick_and_casual"})
+
+    assert resp.status_code == 422
 
 
 def test_deleting_a_leave_returns_the_balance(db, admin, ic, client_as):

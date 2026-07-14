@@ -1,8 +1,9 @@
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from models.users import RoleLevel
 from models.leaves import LeaveType
+from schemas.leaves import reject_balance_bucket
 
 
 class BotManagerInfo(BaseModel):
@@ -28,6 +29,8 @@ class BotLeaveCreate(BaseModel):
     start_date: str
     end_date: str
     note: Optional[str] = None
+
+    _check_leave_type = field_validator("leave_type")(reject_balance_bucket)
 
 
 class BotApproveRequest(BaseModel):

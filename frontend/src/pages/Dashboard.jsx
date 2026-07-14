@@ -192,12 +192,12 @@ function StatusBar({ user, setUser, isOnLeave }) {
     return (
       <div className="bg-white rounded-xl border border-slate-200 p-5">
         <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[#efeaff] text-[#7c5cf0]">
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
             <MapPin size={14} />On Leave
           </span>
           <span className="text-[13.5px] text-slate-500">today</span>
         </div>
-        <div className="mt-3 inline-flex items-center gap-2 text-[12.5px] text-[#7c5cf0] bg-[#efeaff] border border-[#cfc2f7] rounded-lg px-3 py-2">
+        <div className="mt-3 inline-flex items-center gap-2 text-[12.5px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           <Lock size={13} />
           Auto-set from an approved leave — you can&apos;t change this here.
         </div>
@@ -786,6 +786,10 @@ function TeamSection({ users, summary }) {
         member={selectedMember}
         onLeaveIds={onLeaveIds}
         onClose={() => setSelectedMember(null)}
+        onSelectMember={(id) => {
+          const m = users.find(u => u.id === id);
+          if (m) setSelectedMember(m);
+        }}
       />
     </div>
   );

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   Plus, X, Trash2, AlertTriangle, ChevronLeft, ChevronRight,
   Info, CalendarDays, Check, Clock, ChevronDown, AlertCircle, Pencil,
@@ -8,10 +9,11 @@ import {
   getMyLeaves, getManagerLeaves, getTeamAllLeaves, getLeaveLimits,
   getHolidays, getLeaveRules, getLeaveBalances,
   createLeave, updateLeave, approveLeave, rejectLeave, deleteLeave,
+  adminCreateLeave, getUsers,
 } from "../lib/api";
 import {
   formatDate, formatDateShort, isManager, isL2, getLeaveStatus, countBusinessDays,
-  LEAVE_TYPE_META,
+  LEAVE_TYPE_META, balanceKey,
 } from "../lib/utils";
 import Avatar from "../components/ui/Avatar";
 import Badge from "../components/ui/Badge";
@@ -67,6 +69,18 @@ function addCalendarDays(dateObj, n) {
   return d;
 }
 
+// The date that is `n` working days after `dateObj` (weekends/holidays skipped),
+// mirroring the backend's add_working_days. Used for casual-leave notice.
+function addWorkingDays(dateObj, n, holidaySet) {
+  const d = new Date(dateObj);
+  let count = 0;
+  while (count < n) {
+    d.setDate(d.getDate() + 1);
+    if (isWorkingDay(d, holidaySet)) count++;
+  }
+  return d;
+}
+
 function getNoticeRequired(duration, rules) {
   if (!Array.isArray(rules) || !rules.length) return 0;
   for (const rule of rules) {
@@ -96,7 +110,7 @@ function sortByStartDesc(leaves) {
 
 // ─── LeaveCalendar ────────────────────────────────────────────────────────────
 
-function LeaveCalendar({ selected, onSelect, minDate, holidaySet, duration, open }) {
+function LeaveCalendar({ selected, onSelect, minDate, holidaySet, duration, open, allowAny = false }) {
   const today = new Date(); today.setHours(12, 0, 0, 0);
 
   const [view, setView] = useState(() => {
@@ -114,6 +128,9 @@ function LeaveCalendar({ selected, onSelect, minDate, holidaySet, duration, open
   const endDate = selected && duration ? nthWorkingDay(new Date(selected), duration, holidaySet) : null;
 
   function isDisabled(d) {
+    // Admins logging leave on someone's behalf may pick any date at all —
+    // past, weekend or holiday — so no day is off-limits.
+    if (allowAny) return false;
     if (isoDate(d) !== isoDate(today) && d < today) return true;
     if (d.getDay() === 0 || d.getDay() === 6) return true;
     if (holidaySet.has(isoDate(d))) return true;
@@ -121,7 +138,7 @@ function LeaveCalendar({ selected, onSelect, minDate, holidaySet, duration, open
     return false;
   }
 
-  const canPrev = !(year === today.getFullYear() && month === today.getMonth());
+  const canPrev = allowAny || !(year === today.getFullYear() && month === today.getMonth());
   const DOWS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
   return (
@@ -185,10 +202,15 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
   const calRef = useRef(null);
 
   const holidaySet = useMemo(() => new Set((holidays || []).map(h => h.date)), [holidays]);
-  const noticeRules = leaveRules?.earned_advance_notice ?? [];
 
   const isEarned = leave?.leave_type === "earned";
-  const isSC     = leave?.leave_type === "sick_and_casual";
+  const isCasual = leave?.leave_type === "casual";
+  const isSick   = leave?.leave_type === "sick";
+
+  // Earned and casual are notice-gated off different ladders; sick is pinned to today.
+  const noticeRules = isEarned ? (leaveRules?.earned_advance_notice ?? [])
+    : isCasual ? (leaveRules?.casual_advance_notice ?? [])
+    : [];
 
   // Init from the leave being edited
   useEffect(() => {
@@ -203,14 +225,16 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
   }, [open, leave?.id]);
 
   const noticeCalDays = useMemo(() => {
-    if (!isEarned || leave?.is_exception) return 0;
+    if (!noticeRules.length || leave?.is_exception) return 0;
     return getNoticeRequired(duration, noticeRules);
-  }, [isEarned, duration, noticeRules, leave?.is_exception]);
+  }, [duration, noticeRules, leave?.is_exception]);
 
+  // Casual notice is counted in working days, earned in calendar days.
   const minStartDate = useMemo(() => {
     const today = new Date(); today.setHours(12, 0, 0, 0);
-    return noticeCalDays > 0 ? addCalendarDays(today, noticeCalDays) : today;
-  }, [noticeCalDays]);
+    if (noticeCalDays <= 0) return today;
+    return isCasual ? addWorkingDays(today, noticeCalDays, holidaySet) : addCalendarDays(today, noticeCalDays);
+  }, [noticeCalDays, isCasual, holidaySet]);
 
   const endDate = useMemo(() => {
     if (!startDate) return null;
@@ -219,7 +243,7 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
 
   function applyDuration(n) {
     setDuration(Math.max(1, n));
-    setStartDate(null);
+    if (!isSick) setStartDate(null); // sick stays pinned to today
   }
 
   useEffect(() => {
@@ -280,47 +304,61 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
       </div>
 
       <div className="px-6 pt-5 pb-2 space-y-5 max-h-[75vh] overflow-y-auto">
-        {/* Duration (not for S&C) */}
-        {!isSC && (
-          <div>
-            <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Duration</p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="inline-flex items-center border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
-                <button type="button" disabled={duration <= 1} onClick={() => applyDuration(duration - 1)}
-                  className="w-11 h-12 text-[20px] text-slate-500 hover:bg-slate-50 disabled:text-slate-300 disabled:cursor-not-allowed border-r border-slate-200 transition-colors">−</button>
-                <div className="flex items-center justify-center gap-1.5 min-w-[108px] h-12 border-r border-slate-200">
-                  <input type="number" min={1} value={duration}
-                    onChange={e => applyDuration(parseInt(e.target.value) || 1)}
-                    className="w-9 text-right text-[16px] font-bold text-slate-800 border-none outline-none bg-transparent" />
-                  <span className="text-[15px] font-semibold text-slate-500">{duration === 1 ? "day" : "days"}</span>
-                </div>
-                <button type="button" onClick={() => applyDuration(duration + 1)}
-                  className="w-11 h-12 text-[20px] text-slate-500 hover:bg-slate-50 transition-colors">+</button>
+        {/* Duration — every leave type can span multiple working days */}
+        <div>
+          <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Duration</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="inline-flex items-center border-[1.5px] border-slate-200 rounded-xl overflow-hidden">
+              <button type="button" disabled={duration <= 1} onClick={() => applyDuration(duration - 1)}
+                className="w-11 h-12 text-[20px] text-slate-500 hover:bg-slate-50 disabled:text-slate-300 disabled:cursor-not-allowed border-r border-slate-200 transition-colors">−</button>
+              <div className="flex items-center justify-center gap-1.5 min-w-[108px] h-12 border-r border-slate-200">
+                <input type="number" min={1} value={duration}
+                  onChange={e => applyDuration(parseInt(e.target.value) || 1)}
+                  className="w-9 text-right text-[16px] font-bold text-slate-800 border-none outline-none bg-transparent" />
+                <span className="text-[15px] font-semibold text-slate-500">{duration === 1 ? "day" : "days"}</span>
               </div>
-              <div className="flex gap-2">
-                {[1, 2, 3, 5].map(n => (
-                  <button key={n} type="button" onClick={() => applyDuration(n)}
-                    className={`w-11 h-12 border-[1.5px] rounded-xl text-[14px] font-semibold transition-all
-                      ${duration === n ? "border-[#2f6bff] bg-[#eef3ff] text-[#2f6bff]" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}
-                  >{n}</button>
-                ))}
-              </div>
+              <button type="button" onClick={() => applyDuration(duration + 1)}
+                className="w-11 h-12 text-[20px] text-slate-500 hover:bg-slate-50 transition-colors">+</button>
             </div>
-            {isEarned && !leave?.is_exception && noticeCalDays > 0 && (
-              <p className="text-[13px] text-slate-500 mt-3">
-                {duration} day{duration !== 1 ? "s" : ""} of earned leave needs{" "}
-                <b className="text-slate-700">{noticeCalDays} calendar days</b> notice.
-                Earliest start: <b className="text-slate-700">{fmtCal(minStartDate)}</b>
-              </p>
-            )}
+            <div className="flex gap-2">
+              {[1, 2, 3, 5].map(n => (
+                <button key={n} type="button" onClick={() => applyDuration(n)}
+                  className={`w-11 h-12 border-[1.5px] rounded-xl text-[14px] font-semibold transition-all
+                    ${duration === n ? "border-[#2f6bff] bg-[#eef3ff] text-[#2f6bff]" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"}`}
+                >{n}</button>
+              ))}
+            </div>
           </div>
-        )}
+          {!leave?.is_exception && noticeCalDays > 0 && (
+            <p className="text-[13px] text-slate-500 mt-3">
+              {duration} day{duration !== 1 ? "s" : ""} of {leave?.leave_type} leave needs{" "}
+              <b className="text-slate-700">{noticeCalDays} {isCasual ? "working" : "calendar"} days</b> notice.
+              Earliest start: <b className="text-slate-700">{fmtCal(minStartDate)}</b>
+            </p>
+          )}
+        </div>
 
         {/* Date picker */}
         <div>
-          <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
-            {isSC ? "Date" : "Start date"}
-          </p>
+          <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Start date</p>
+          {isSick ? (
+            /* The API rejects any sick start date but today, so moving it is not offered. */
+            <div className="group relative inline-block max-w-[280px] w-full">
+              <div tabIndex={0}
+                aria-describedby="edit-sick-date-note"
+                className="flex items-center justify-between gap-3 w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-3
+                           text-[15px] text-slate-800 bg-slate-50 cursor-not-allowed
+                           focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                <span>{startDate ? fmtCal(new Date(startDate + "T12:00:00")) : "—"}</span>
+                <CalendarDays size={16} className="text-slate-400 shrink-0" />
+              </div>
+              <p id="edit-sick-date-note"
+                className="mt-2 text-[12.5px] font-medium text-red-600 opacity-0 transition-opacity
+                           group-hover:opacity-100 group-focus-within:opacity-100">
+                Start date must be today for sick leaves.
+              </p>
+            </div>
+          ) : (
           <div className="relative" ref={calRef}>
             <button type="button" onClick={() => setShowCal(v => !v)}
               className={`flex items-center justify-between gap-3 w-full max-w-[280px] border-[1.5px] rounded-xl px-4 py-3 text-[15px] transition-colors cursor-pointer bg-white hover:border-slate-300
@@ -336,6 +374,7 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
               </div>
             )}
           </div>
+          )}
           {startDate && endDate && duration > 1 && (
             <p className="text-[13px] text-slate-500 mt-2.5">
               Ends <b className="font-semibold text-slate-700">{fmtCal(endDate)}</b>
@@ -378,15 +417,93 @@ function EditLeaveModal({ open, onClose, leave, holidays, leaveRules, onSuccess 
   );
 }
 
+// ─── Styled dropdown ──────────────────────────────────────────────────────────
+
+// A styled replacement for a native <select>. `options` is [{ id, label, note? }].
+// The menu is portalled to <body> with fixed positioning so it floats above the
+// modal instead of being clipped by its scroll container — a real dropdown.
+function StyledDropdown({ value, onSelect, options, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos]   = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef    = useRef(null);
+  const selected = options.find(o => o.id === value);
+
+  function toggle() {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: r.left, width: r.width });
+    }
+    setOpen(o => !o);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) {
+      if (triggerRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    }
+    // A native dropdown detaches on scroll; closing keeps the menu from drifting.
+    const close = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button ref={triggerRef} type="button" onClick={toggle}
+        className={`flex items-center justify-between gap-3 w-full border-[1.5px] rounded-xl px-4 py-3 text-[15px] transition-colors cursor-pointer bg-white hover:border-slate-300
+          ${selected ? "text-slate-800 border-slate-300" : "text-slate-400 border-slate-200"}`}>
+        <span className="truncate">
+          {selected ? selected.label : placeholder}
+          {selected && selected.note && <span className="text-slate-400 font-normal"> · {selected.note}</span>}
+        </span>
+        <ChevronDown size={16} className={`text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && pos && createPortal(
+        <div ref={menuRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, width: pos.width, zIndex: 60 }}
+          className="bg-white border border-slate-200 rounded-xl shadow-xl p-1.5 max-h-72 overflow-y-auto">
+          {options.map(o => {
+            const active = value === o.id;
+            return (
+              <button key={o.id} type="button"
+                onClick={() => { onSelect(o.id); setOpen(false); }}
+                className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors
+                  ${active ? "bg-[#eef3ff]" : "hover:bg-slate-50"}`}>
+                <span className="min-w-0">
+                  <span className={`block text-[14px] font-semibold ${active ? "text-[#2f6bff]" : "text-slate-700"}`}>{o.label}</span>
+                  {o.note && <span className="block text-[12px] text-slate-400 mt-0.5">{o.note}</span>}
+                </span>
+                {active && <Check size={16} className="text-[#2f6bff] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ─── Request leave modal (Phase 3) ────────────────────────────────────────────
 
-function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained = false, isAdmin = false, balances, onSuccess }) {
-  const [category, setCategory]     = useState(null); // "earned"|"sick_and_casual"|"special"
+export function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained = false, isAdmin = false, adminForUser = null, users = null, defaultTargetId = null, balances, onSuccess }) {
+  const [category, setCategory]     = useState(null); // "earned"|"sick"|"casual"|"special"
   const [specialType, setSpecialType] = useState("");
   const [duration, setDuration]     = useState(1);
   const [startDate, setStartDate]   = useState(null);
   const [note, setNote]             = useState("");
   const [isException, setIsException] = useState(false);
+  const [adminTargetId, setAdminTargetId] = useState(null);
   const [error, setError]           = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showCal, setShowCal]       = useState(false);
@@ -394,54 +511,74 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
   const calRef  = useRef(null);
   const infoRef = useRef(null);
 
+  // When the modal isn't handed a fixed target, an admin picks the employee the
+  // leave is for from a dropdown. Everyone else logs only for themselves.
+  const showEmployeePicker = isAdmin && !adminForUser && Array.isArray(users) && users.length > 0;
+  const target = adminForUser ?? (showEmployeePicker ? users.find(u => u.id === adminTargetId) ?? null : null);
+
   const holidaySet = useMemo(() => new Set((holidays || []).map(h => h.date)), [holidays]);
-  const noticeRules = leaveRules?.earned_advance_notice ?? [];
-  const cutoffHour = leaveRules?.sick_and_casual_cutoff_hour ?? 10;
-  const cutoffMin  = leaveRules?.sick_and_casual_cutoff_min  ?? 0;
+
+  // Sick must start today — except for admins and managerless users, whom the
+  // backend exempts from every date rule, so they keep a real picker.
+  const isSickCategory = category === "sick" && !unconstrained;
+
+  const earnedNoticeRules = leaveRules?.earned_advance_notice ?? [];
+  const casualNoticeRules = leaveRules?.casual_advance_notice ?? [];
+  const cutoffHour = leaveRules?.sick_cutoff_hour ?? 10;
+  const cutoffMin  = leaveRules?.sick_cutoff_min  ?? 0;
+
+  // Earned and casual are both notice-gated, off different ladders. Sick and the
+  // special types have no ladder, so they contribute no minimum start date.
+  const noticeRules = category === "earned" ? earnedNoticeRules
+    : category === "casual" ? casualNoticeRules
+    : [];
 
   const noticeCalDays = useMemo(() => {
-    if (unconstrained || category !== "earned" || isException) return 0;
+    if (unconstrained || isException || !noticeRules.length) return 0;
     return getNoticeRequired(duration, noticeRules);
-  }, [unconstrained, category, duration, noticeRules, isException]);
+  }, [unconstrained, duration, noticeRules, isException]);
 
+  // Casual notice is counted in working days, earned in calendar days.
   const minStartDate = useMemo(() => {
     const today = new Date(); today.setHours(12, 0, 0, 0);
-    if (noticeCalDays > 0) return addCalendarDays(today, noticeCalDays);
-    return today;
-  }, [noticeCalDays]);
+    if (noticeCalDays <= 0) return today;
+    return category === "casual"
+      ? addWorkingDays(today, noticeCalDays, holidaySet)
+      : addCalendarDays(today, noticeCalDays);
+  }, [noticeCalDays, category, holidaySet]);
 
   const endDate = useMemo(() => {
     if (!startDate) return null;
     return nthWorkingDay(new Date(startDate), duration, holidaySet);
   }, [startDate, duration, holidaySet]);
 
-  // For S&C auto-approve check
+  // Sick always starts today, so the cutoff alone decides auto-approval.
   const willAutoApprove = useMemo(() => {
-    if (category !== "sick_and_casual") return false;
-    if (startDate !== todayStr()) return false;
+    if (category !== "sick") return false;
     const now = new Date();
     return (now.getHours() * 60 + now.getMinutes()) < (cutoffHour * 60 + cutoffMin);
-  }, [category, startDate, cutoffHour, cutoffMin]);
+  }, [category, cutoffHour, cutoffMin]);
 
   // Reset on close/open
   useEffect(() => {
     if (!open) return;
     setCategory(null); setSpecialType(""); setDuration(1); setStartDate(null);
     setNote(""); setIsException(false); setError(""); setSubmitting(false);
-    setShowCal(false); setShowInfo(false);
-  }, [open]);
+    setShowCal(false); setShowInfo(false); setAdminTargetId(defaultTargetId);
+  }, [open, defaultTargetId]);
 
-  // S&C defaults to today
+  // Sick is pinned to today — the backend rejects any other start date.
   useEffect(() => {
-    if (category === "sick_and_casual") setStartDate(todayStr());
+    if (category === "sick" && !unconstrained) setStartDate(todayStr());
     else setStartDate(null);
     setDuration(1); setIsException(false); setError("");
-  }, [category]);
+  }, [category, unconstrained]);
 
-  // Changing duration for earned forces date re-pick
+  // Changing duration moves the notice minimum, so the picked date may no longer
+  // be legal — force a re-pick. Sick has no ladder and is pinned to today.
   function applyDuration(n) {
     setDuration(Math.max(1, n));
-    setStartDate(null);
+    if (!isSickCategory) setStartDate(null);
   }
 
   // Click-outside
@@ -455,20 +592,24 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
   }, []);
 
   const leaveType = category === "special" ? specialType : category;
+  // Sick and casual share one pool, so the balance is keyed by that pool, not by
+  // the type. The warning names the pool — a casual request can be blocked by
+  // sick days already taken, and the copy has to explain that.
+  const limitType = leaveType ? balanceKey(leaveType) : null;
 
   // balances.taken counts approved days only, matching what the API enforces.
-  const limitEntry     = leaveType ? balances?.[leaveType] : null;
+  const limitEntry     = limitType ? balances?.[limitType] : null;
   const limitRemaining = limitEntry?.limit != null ? limitEntry.limit - limitEntry.taken : null;
   const isOverLimit    = !isAdmin && limitRemaining != null && duration > limitRemaining;
 
   const overLimitText = useMemo(() => {
     if (!isOverLimit) return null;
-    const label = LEAVE_TYPE_META[leaveType]?.label ?? leaveType;
+    const label = LEAVE_TYPE_META[limitType]?.label ?? limitType;
     const dayWord = duration === 1 ? "day" : "days";
     return `This exceeds your ${label} limit. You have ${Math.max(0, limitRemaining)} of ` +
            `${limitEntry.limit} days remaining and this request is ${duration} working ${dayWord}. ` +
            `Submit is disabled until you shorten it.`;
-  }, [isOverLimit, leaveType, limitRemaining, limitEntry, duration]);
+  }, [isOverLimit, limitType, limitRemaining, limitEntry, duration]);
 
   async function handleSubmit() {
     if (!note.trim())    { setError("Note is required."); return; }
@@ -476,13 +617,17 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
     if (category === "special" && !specialType) { setError("Please select a leave type."); return; }
     setSubmitting(true);
     try {
-      await createLeave({
+      const payload = {
         leave_type:   leaveType,
         note:         note.trim(),
         start_date:   startDate,
         end_date:     endDate ? isoDate(endDate) : startDate,
         is_exception: isException,
-      });
+      };
+      // Acting on another user's behalf posts to the admin endpoint, which
+      // records the leave as approved and skips notice and overlap checks.
+      if (target) await adminCreateLeave(target.id, payload);
+      else await createLeave(payload);
       onSuccess();
       onClose();
     } catch (ex) {
@@ -495,24 +640,25 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
   // Ordered so the user sees the most actionable blocker first. null = submittable.
   const disabledReason = useMemo(() => {
     if (submitting) return "Submitting your request…";
+    if (showEmployeePicker && !target) return "Choose an employee.";
     if (!category) return "Choose a leave type.";
     if (category === "special" && !specialType) return "Choose which type of special leave.";
     if (!startDate) return "Pick a start date.";
     if (!note.trim()) return "Add a note explaining this leave.";
     if (isOverLimit) return overLimitText;
     return null;
-  }, [submitting, category, specialType, startDate, note, isOverLimit, overLimitText]);
+  }, [submitting, showEmployeePicker, target, category, specialType, startDate, note, isOverLimit, overLimitText]);
 
   // Status hint
   const statusHint = useMemo(() => {
     if (!startDate || !category) return null;
     if (unconstrained) return { kind: "good", text: "Logged instantly — no approval needed." };
     if (isException) return null; // exception banner already shown in the duration section
-    if (category === "sick_and_casual") {
+    if (category === "sick") {
       const fmtCutoff = `${cutoffHour % 12 || 12}:${String(cutoffMin).padStart(2, "0")} ${cutoffHour < 12 ? "AM" : "PM"}`;
-      if (willAutoApprove) return { kind: "good", text: `Auto-approved — submitted before ${fmtCutoff}, no manager needed.` };
-      if (startDate === todayStr()) return { kind: "warn", text: `After ${fmtCutoff} cutoff — needs manager approval.` };
-      return { kind: "info", text: "Future Sick & Casual leave — no advance notice required." };
+      return willAutoApprove
+        ? { kind: "good", text: `Auto-approved — submitted before ${fmtCutoff}, no manager needed.` }
+        : { kind: "warn", text: `After ${fmtCutoff} cutoff — needs manager approval.` };
     }
     return { kind: "info", text: "Needs manager approval." };
   }, [unconstrained, startDate, category, isException, willAutoApprove, cutoffHour, cutoffMin]);
@@ -523,16 +669,19 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
     : "Submit request";
 
   const CATEGORIES = [
-    { id: "earned",          label: "Earned",         sub: "Planned time off" },
-    { id: "sick_and_casual", label: "Sick & Casual",  sub: "Illness or short personal" },
-    { id: "special",         label: "Special",        sub: "Marriage, bereavement & more" },
+    { id: "earned",  label: "Earned",  sub: "Planned time off" },
+    { id: "sick",    label: "Sick",    sub: "Out ill today" },
+    { id: "casual",  label: "Casual",  sub: "Planned short break" },
+    { id: "special", label: "Special", sub: "Marriage, bereavement & more" },
   ];
 
   return (
     <Modal open={open} onClose={onClose} size="md">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-        <h2 className="text-[22px] font-bold text-slate-900 tracking-tight">{unconstrained ? "Log leave" : "Request leave"}</h2>
+        <h2 className="text-[22px] font-bold text-slate-900 tracking-tight">
+          {target ? `Log leave for ${target.name}` : unconstrained ? "Log leave" : "Request leave"}
+        </h2>
         <div className="flex items-center gap-3">
           {/* Info popover */}
           <div className="relative" ref={infoRef}>
@@ -546,9 +695,25 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
                 <p className="text-[12.5px] text-slate-600 leading-relaxed mb-3">
                   Calendar-day notice required: <b>1–2 days → 14 cal days</b>, <b>3–4 → 21</b>, <b>5+ → 30</b>. Always needs approval.
                 </p>
-                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Sick & Casual</p>
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Sick</p>
                 <p className="text-[12.5px] text-slate-600 leading-relaxed mb-3">
-                  Same-day before <b>{cutoffHour % 12 || 12}:00 {cutoffHour < 12 ? "AM" : "PM"}</b> → auto-approved. Otherwise needs approval. No advance notice for future dates.
+                  Must start <b>today</b>. Submitted before{" "}
+                  <b>{cutoffHour % 12 || 12}:{String(cutoffMin).padStart(2, "0")} {cutoffHour < 12 ? "AM" : "PM"}</b> → auto-approved.
+                  Otherwise needs approval.
+                </p>
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Casual</p>
+                <p className="text-[12.5px] text-slate-600 leading-relaxed mb-3">
+                  Working-day notice required:{" "}
+                  {casualNoticeRules.map((r, i) => (
+                    <span key={r.min}>
+                      {i > 0 && ", "}
+                      <b>{r.max == null ? `${r.min}+` : r.min === r.max ? `${r.min}` : `${r.min}–${r.max}`}
+                        {" "}{r.max === 1 ? "day" : "days"} → {r.notice}</b>
+                    </span>
+                  ))}. Always needs approval.
+                </p>
+                <p className="text-[12.5px] text-slate-500 leading-relaxed mb-3">
+                  Sick and Casual share one annual allowance.
                 </p>
                 <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Special</p>
                 <p className="text-[12.5px] text-slate-600 leading-relaxed mb-2">
@@ -568,10 +733,23 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
       </div>
 
       <div className="px-6 pt-5 pb-2 space-y-5 max-h-[75vh] overflow-y-auto">
+        {/* Employee picker — admins only */}
+        {showEmployeePicker && (
+          <div>
+            <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Who is this for?</p>
+            <StyledDropdown
+              value={adminTargetId}
+              onSelect={(id) => setAdminTargetId(id)}
+              options={users.map(u => ({ id: u.id, label: u.name, note: u.role || undefined }))}
+              placeholder="Select an employee…"
+            />
+          </div>
+        )}
+
         {/* Category picker */}
         <div>
           <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">What kind of leave?</p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             {CATEGORIES.map(({ id, label, sub }) => (
               <button key={id} type="button" onClick={() => setCategory(id)}
                 className={`border-[1.5px] rounded-xl p-3 text-center transition-all
@@ -587,18 +765,17 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
         {category === "special" && (
           <div>
             <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">Which type?</p>
-            <select value={specialType} onChange={e => { setSpecialType(e.target.value); setDuration(1); setStartDate(null); }}
-              className="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-3 text-[15px] text-slate-800 bg-white focus:outline-none focus:border-[#2f6bff] appearance-none">
-              <option value="">Select leave type…</option>
-              {SPECIAL_SUBTYPES.map(s => (
-                <option key={s.id} value={s.id}>{s.label} — {s.note}</option>
-              ))}
-            </select>
+            <StyledDropdown
+              value={specialType}
+              onSelect={(id) => { setSpecialType(id); setDuration(1); setStartDate(null); setError(""); }}
+              options={SPECIAL_SUBTYPES}
+              placeholder="Select leave type…"
+            />
           </div>
         )}
 
-        {/* Duration (not shown for S&C) */}
-        {category && category !== "sick_and_casual" && (category !== "special" || specialType) && (
+        {/* Duration — every category can span multiple working days */}
+        {category && (category !== "special" || specialType) && (
           <div>
             <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">How long?</p>
             <div className="flex items-center gap-3 flex-wrap">
@@ -624,15 +801,15 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
               </div>
             </div>
 
-            {/* Notice info for earned */}
-            {category === "earned" && !isException && noticeCalDays > 0 && (
+            {/* Notice info for the ladder-gated types */}
+            {!isException && noticeCalDays > 0 && (
               <p className="text-[13px] text-slate-500 mt-3">
-                {duration} working day{duration !== 1 ? "s" : ""} of earned leave needs{" "}
-                <b className="text-slate-700">{noticeCalDays} calendar days</b> notice.
+                {duration} working day{duration !== 1 ? "s" : ""} of {category} leave needs{" "}
+                <b className="text-slate-700">{noticeCalDays} {category === "casual" ? "working" : "calendar"} days</b> notice.
                 Earliest start: <b className="text-slate-700">{fmtCal(minStartDate)}</b>
               </p>
             )}
-            {category === "earned" && isException && (
+            {(category === "earned" || category === "casual") && isException && (
               <div className="mt-3 flex items-start gap-2 bg-[#f0ecfe] border border-[#cfc2f7] text-[#7c5cf0] rounded-xl px-3 py-2.5 text-[12.5px] leading-relaxed">
                 <Info size={15} className="mt-0.5 shrink-0" />
                 <span><b>Exception mode.</b> Notice rules waived — routes directly to your skip manager.{" "}
@@ -647,8 +824,27 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
         {category && (category !== "special" || specialType) && (
           <div>
             <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wider mb-3">
-              {category === "sick_and_casual" ? "Which day?" : "When does it start?"}
+              {isSickCategory ? "Which day?" : "When does it start?"}
             </p>
+            {isSickCategory ? (
+              /* Sick always starts today, so the trigger is inert. The note is
+                 revealed on hover and on keyboard focus, not just hover. */
+              <div className="group relative inline-block max-w-[280px] w-full">
+                <div tabIndex={0}
+                  aria-describedby="sick-date-note"
+                  className="flex items-center justify-between gap-3 w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-3
+                             text-[15px] text-slate-800 bg-slate-50 cursor-not-allowed
+                             focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  <span>{fmtCal(new Date(todayStr() + "T12:00:00"))}</span>
+                  <CalendarDays size={16} className="text-slate-400 shrink-0" />
+                </div>
+                <p id="sick-date-note"
+                  className="mt-2 text-[12.5px] font-medium text-red-600 opacity-0 transition-opacity
+                             group-hover:opacity-100 group-focus-within:opacity-100">
+                  Start date must be today for sick leaves.
+                </p>
+              </div>
+            ) : (
             <div className="relative" ref={calRef}>
               <button type="button"
                 onClick={() => setShowCal(v => !v)}
@@ -662,10 +858,12 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
                 <div className="absolute top-full left-0 mt-2 z-50">
                   <LeaveCalendar selected={startDate}
                     onSelect={iso => { setStartDate(iso); setShowCal(false); setError(""); }}
-                    minDate={minStartDate} holidaySet={holidaySet} duration={duration} open={showCal} />
+                    minDate={minStartDate} holidaySet={holidaySet} duration={duration} open={showCal}
+                    allowAny={!!target} />
                 </div>
               )}
             </div>
+            )}
 
             {startDate && endDate && duration > 1 && (
               <p className="text-[13px] text-slate-500 mt-2.5">
@@ -685,7 +883,7 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
               </div>
             )}
 
-            {category === "earned" && !isException && !unconstrained && (
+            {(category === "earned" || category === "casual") && !isException && !unconstrained && (
               <p className="text-[12.5px] text-slate-400 mt-2.5">
                 Need it sooner?{" "}
                 <button type="button" onClick={() => { setIsException(true); setStartDate(null); }}
@@ -718,7 +916,7 @@ function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconstrained 
             <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
             <p className="text-[14px] text-red-700 leading-snug">
               <span className="font-semibold">
-                This exceeds your {LEAVE_TYPE_META[leaveType]?.label ?? leaveType} limit.
+                This exceeds your {LEAVE_TYPE_META[limitType]?.label ?? limitType} limit.
               </span>{" "}
               You have {Math.max(0, limitRemaining)} of {limitEntry.limit} days remaining and this
               request is {duration} working {duration === 1 ? "day" : "days"}. Submit is disabled
@@ -1013,9 +1211,17 @@ export default function Leaves() {
   const [rejectLeaveObj, setRejectLeaveObj] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [deleting,       setDeleting]       = useState(false);
+  const [allUsers,       setAllUsers]       = useState([]);
 
   const userIsManager = isManager(user);
   const userIsL2      = isL2(user);
+  const userIsAdmin   = !!user?.is_admin;
+
+  // Admins log leave on any employee's behalf, so they need the full roster.
+  useEffect(() => {
+    if (!userIsAdmin) return;
+    getUsers().then(setAllUsers).catch(() => setAllUsers([]));
+  }, [userIsAdmin]);
 
   const fetchMyLeaves = useCallback(async () => {
     const data = await getMyLeaves();
@@ -1279,6 +1485,7 @@ export default function Leaves() {
           balances={balances}
           onClose={() => setDrawerLeave(null)}
           onDelete={id => { setDrawerLeave(null); setConfirmDeleteId(id); }}
+          onEdit={leave => { setDrawerLeave(null); setEditLeave(leave); }}
           onApprove={async id => { setDrawerLeave(null); await handleApprove(id); }}
           onRejectOpen={leave => { setDrawerLeave(null); setRejectLeaveObj(leave); }}
         />
@@ -1290,8 +1497,9 @@ export default function Leaves() {
         onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchTeamLeaves()]); }} />
 
       <RequestLeaveModal open={showRequest} onClose={() => setShowRequest(false)}
-        holidays={holidays} leaveRules={leaveRules} unconstrained={userIsL2}
-        isAdmin={!!user?.is_admin} balances={balances}
+        holidays={holidays} leaveRules={leaveRules} unconstrained={userIsL2 || userIsAdmin}
+        isAdmin={userIsAdmin} users={userIsAdmin ? allUsers : null} defaultTargetId={user?.id}
+        balances={balances}
         onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchTeamLeaves()]); }} />
 
       <RejectModal open={!!rejectLeaveObj} onClose={() => setRejectLeaveObj(null)}

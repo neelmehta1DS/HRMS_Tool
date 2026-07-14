@@ -100,7 +100,7 @@ def update_user(
         if clash:
             raise HTTPException(status_code=409, detail="A user with that email already exists")
 
-    for field in ("email", "name", "role", "slack_user_id", "is_admin", "birthday", "joining_date"):
+    for field in ("email", "name", "role", "phone_number", "slack_user_id", "is_admin", "birthday", "joining_date"):
         if field in update.model_fields_set:
             setattr(user, field, getattr(update, field))
 
@@ -177,8 +177,9 @@ class NoticeRule(BaseModel):
 
 class LeaveRulesUpdate(BaseModel):
     earned_advance_notice: Optional[list[NoticeRule]] = None
-    sick_and_casual_cutoff_hour: Optional[int] = None
-    sick_and_casual_cutoff_min: Optional[int] = None
+    casual_advance_notice: Optional[list[NoticeRule]] = None
+    sick_cutoff_hour: Optional[int] = None
+    sick_cutoff_min: Optional[int] = None
 
 
 @router.put("/leaves/rules")
@@ -186,12 +187,16 @@ def update_rules(
     body: LeaveRulesUpdate,
     _: Annotated[User, Depends(require_admin)],
 ):
-    if body.earned_advance_notice is not None:
-        LEAVE_RULES["earned_advance_notice"] = [r.model_dump(exclude_none=True) for r in body.earned_advance_notice]
-    if body.sick_and_casual_cutoff_hour is not None:
-        LEAVE_RULES["sick_and_casual_cutoff_hour"] = body.sick_and_casual_cutoff_hour
-    if body.sick_and_casual_cutoff_min is not None:
-        LEAVE_RULES["sick_and_casual_cutoff_min"] = body.sick_and_casual_cutoff_min
+    for ladder in ("earned_advance_notice", "casual_advance_notice"):
+        rules = getattr(body, ladder)
+        if rules is not None:
+            LEAVE_RULES[ladder] = [r.model_dump(exclude_none=True) for r in rules]
+
+    for field in ("sick_cutoff_hour", "sick_cutoff_min"):
+        val = getattr(body, field)
+        if val is not None:
+            LEAVE_RULES[field] = val
+
     persist_leave_limits()
     return LEAVE_RULES
 

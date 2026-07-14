@@ -6,7 +6,7 @@ import { Field, TextInput } from "./Field";
 import { adminCreateUser, adminUpdateUser } from "../../lib/api";
 
 const BLANK = {
-  email: "", name: "", role: "", manager_id: null,
+  email: "", name: "", role: "", phone_number: "", manager_id: null,
   slack_user_id: "", birthday: "", joining_date: "", is_admin: false,
 };
 
@@ -16,6 +16,7 @@ function toForm(user) {
     email: user.email ?? "",
     name: user.name ?? "",
     role: user.role ?? "",
+    phone_number: user.phone_number ?? "",
     manager_id: user.manager_id ?? null,
     slack_user_id: user.slack_user_id ?? "",
     birthday: user.birthday ?? "",
@@ -28,6 +29,7 @@ function toForm(user) {
 function toPayload(form) {
   return {
     ...form,
+    phone_number: form.phone_number || null,
     slack_user_id: form.slack_user_id || null,
     birthday: form.birthday || null,
     joining_date: form.joining_date || null,
@@ -80,6 +82,10 @@ export default function UserFormModal({ open, onClose, onSaved, user, users }) {
           hint={isEdit ? undefined : "They sign in with Google using this address."}
         >
           <TextInput type="email" value={form.email} onChange={set("email")} placeholder="priya@1digitalstack.ai" />
+        </Field>
+
+        <Field label="Phone" hint="Optional. Contact number shown on their profile.">
+          <TextInput type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 98765 43210" />
         </Field>
 
         <Field label="Manager">

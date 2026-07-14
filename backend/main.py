@@ -29,6 +29,7 @@ def _migrate():
         for col, definition in [
             ("stepping_out_from", "TIME"),
             ("stepping_out_to",   "TIME"),
+            ("phone_number",      "VARCHAR"),
         ]:
             if col not in users_cols:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {definition}"))

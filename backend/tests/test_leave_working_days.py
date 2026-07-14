@@ -57,10 +57,13 @@ def test_sick_leave_on_a_saturday_is_rejected(client_as, ic):
     sat = _next_saturday()
 
     resp = client_as(ic).post("/leaves", json={
-        "leave_type": "sick_and_casual", "note": "Sick", "start_date": str(sat),
+        "leave_type": "sick", "note": "Sick", "start_date": str(sat),
     })
 
+    # The working-day check runs before the type's own rules, so this is rejected
+    # for containing no working day — not for failing sick's must-start-today.
     assert resp.status_code == 422
+    assert "at least one working day" in resp.json()["detail"]
 
 
 def test_leave_on_a_public_holiday_is_rejected(client_as, ic):

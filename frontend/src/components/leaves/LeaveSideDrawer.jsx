@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Info, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Pencil, Trash2, X } from "lucide-react";
 import Avatar from "../ui/Avatar";
 import { LEAVE_TYPE_META, countBusinessDays } from "../../lib/utils";
 import { StatusBadge, derivedStatus, fmtDateRange, fmtDecidedAt } from "./leaveDisplay";
@@ -11,21 +11,21 @@ function ApprovalSteps({ leave }) {
   const firstPendingIdx = sorted.findIndex((a) => a.status === "pending");
 
   function circleStyle(a, idx) {
-    if (a.status === "approved") return "bg-emerald-50 border-2 border-emerald-400 text-emerald-500";
+    if (a.status === "approved") return "bg-emerald-50/50 border-2 border-emerald-500 text-emerald-600";
     if (a.status === "rejected") return "bg-red-50 border-2 border-red-400 text-red-500";
     if (idx === firstPendingIdx) return "bg-amber-50 border-2 border-amber-400 text-amber-500";
     return "bg-white border-2 border-slate-200 text-slate-300";
   }
 
   function nameColor(a, idx) {
-    if (a.status === "approved") return "text-emerald-600";
+    if (a.status === "approved") return "text-slate-900";
     if (a.status === "rejected") return "text-red-500";
     if (idx === firstPendingIdx) return "text-slate-900";
     return "text-slate-400";
   }
 
   function statusLine(a, idx) {
-    if (a.status === "approved") return { text: `Approved${a.decided_at ? ` · ${fmtDecidedAt(a.decided_at)}` : ""}`, cls: "text-emerald-500" };
+    if (a.status === "approved") return { text: `Approved${a.decided_at ? ` · ${fmtDecidedAt(a.decided_at)}` : ""}`, cls: "text-emerald-600" };
     if (a.status === "rejected") return { text: `Declined${a.decided_at ? ` · ${fmtDecidedAt(a.decided_at)}` : ""}`, cls: "text-red-500" };
     if (idx === firstPendingIdx) return { text: "Pending", cls: "text-amber-600" };
     return { text: "Waiting", cls: "text-slate-400" };
@@ -111,7 +111,7 @@ function EmployeeBalanceBlock({ balances, name }) {
  *  - admin: read-and-edit; the page owns the buttons, so this shows none
  */
 export default function LeaveSideDrawer({
-  leave, context, holidays, onClose, onDelete, onApprove, onRejectOpen, balances,
+  leave, context, holidays, onClose, onDelete, onEdit, onApprove, onRejectOpen, balances,
 }) {
   if (!leave) return null;
   const days = countBusinessDays(leave.start_date, leave.end_date, holidays || []);
@@ -126,6 +126,8 @@ export default function LeaveSideDrawer({
   const balanceSource = isOwn ? balances : (leave.user_balances ?? balances);
   const showManagerActions = isManager && (status === "pending" || status === "pending_l2");
   const showWithdraw = isOwn && (status === "pending" || status === "pending_l2" || status === "scheduled");
+  // Editable whenever the leaves route accepts it — same rule the table's pencil uses.
+  const showEdit = isOwn && onEdit && (status === "pending" || status === "pending_l2");
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
@@ -209,13 +211,23 @@ export default function LeaveSideDrawer({
           )}
         </div>
 
-        {(showManagerActions || showWithdraw) && (
+        {(showManagerActions || showWithdraw || showEdit) && (
           <div className="border-t border-slate-100 px-6 py-4">
-            {showWithdraw && (
-              <button onClick={() => { onClose(); onDelete(leave.id); }}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-[1.5px] border-red-200 text-red-600 text-[15px] font-semibold hover:bg-red-50 transition-colors">
-                <Trash2 size={16} /> Withdraw leave
-              </button>
+            {(showEdit || showWithdraw) && (
+              <div className="flex items-center gap-3">
+                {showEdit && (
+                  <button onClick={() => { onClose(); onEdit(leave); }}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-[1.5px] border-slate-200 text-slate-700 text-[15px] font-semibold hover:bg-slate-50 transition-colors">
+                    <Pencil size={16} /> Edit
+                  </button>
+                )}
+                {showWithdraw && (
+                  <button onClick={() => { onClose(); onDelete(leave.id); }}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border-[1.5px] border-red-200 text-red-600 text-[15px] font-semibold hover:bg-red-50 transition-colors">
+                    <Trash2 size={16} /> Withdraw leave
+                  </button>
+                )}
+              </div>
             )}
             {showManagerActions && (
               <div className="flex items-center gap-3">

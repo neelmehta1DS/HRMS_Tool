@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import Modal from "../ui/Modal";
 import Button from "../ui/Button";
 import { Field, Select, TextInput } from "./Field";
-import { LEAVE_TYPE_META, countBusinessDays } from "../../lib/utils";
+import { LEAVE_TYPE_META, REQUESTABLE_LEAVE_TYPES, countBusinessDays } from "../../lib/utils";
 import { adminCreateLeave, adminUpdateLeave } from "../../lib/api";
 
-const TYPES = Object.keys(LEAVE_TYPE_META);
+// Not every key of LEAVE_TYPE_META is requestable — `sick_and_casual` is a
+// balance pool, and the API 422s if it is submitted as a leave's type.
+const TYPES = REQUESTABLE_LEAVE_TYPES;
 const STATUSES = ["approved", "pending", "rejected"];
 
 const BLANK = { leave_type: "earned", start_date: "", end_date: "", note: "", status: "approved" };

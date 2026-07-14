@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 class LeaveType(StrEnum):
     earned = "earned"
+    sick = "sick"
+    casual = "casual"
+    # Balance bucket only: sick and casual draw from this shared pool. No Leave
+    # row ever carries it as its own leave_type — see REQUESTABLE_LEAVE_TYPES.
     sick_and_casual = "sick_and_casual"
     bereavement = "bereavement"
     marriage = "marriage"
@@ -27,6 +31,41 @@ SPECIAL_LEAVE_TYPES = {
     LeaveType.maternity,
     LeaveType.paternity,
     LeaveType.lwp,
+}
+
+BALANCE_BUCKET: dict[LeaveType, LeaveType] = {
+    LeaveType.sick: LeaveType.sick_and_casual,
+    LeaveType.casual: LeaveType.sick_and_casual,
+}
+
+REQUESTABLE_LEAVE_TYPES = frozenset(LeaveType) - {LeaveType.sick_and_casual}
+
+
+def balance_key(leave_type: LeaveType) -> LeaveType:
+    """The pool a leave type draws from — identity for every type but sick/casual.
+
+    Sick and casual are separate types so their notice rules can diverge, but they
+    share one annual allowance. Every LeaveBalance and LEAVE_LIMITS lookup goes
+    through here, or each would silently get an allowance of its own.
+    """
+    return BALANCE_BUCKET.get(leave_type, leave_type)
+
+
+# The distinct pools a balance can be held against, in display order. Every
+# LeaveType maps onto exactly one of these via balance_key.
+BALANCE_POOLS: tuple[LeaveType, ...] = tuple(dict.fromkeys(balance_key(lt) for lt in LeaveType))
+
+
+LEAVE_TYPE_LABELS: dict[LeaveType, str] = {
+    LeaveType.earned: "Earned",
+    LeaveType.sick: "Sick",
+    LeaveType.casual: "Casual",
+    LeaveType.sick_and_casual: "Sick & Casual",
+    LeaveType.bereavement: "Bereavement",
+    LeaveType.marriage: "Marriage",
+    LeaveType.maternity: "Maternity",
+    LeaveType.paternity: "Paternity",
+    LeaveType.lwp: "Leave Without Pay",
 }
 
 

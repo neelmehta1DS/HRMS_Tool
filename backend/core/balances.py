@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from core.workdays import count_weekdays
-from models.leaves import Leave, LeaveBalance, LeaveStatus
+from models.leaves import Leave, LeaveBalance, LeaveStatus, balance_key
 
 
 def recompute_balances(db: Session, user_id: int) -> None:
@@ -23,7 +23,8 @@ def recompute_balances(db: Session, user_id: int) -> None:
 
     totals: dict[tuple, int] = {}
     for leave in approved:
-        key = (leave.leave_type, leave.start_date.year)
+        # Sick and casual leaves both accumulate into the shared sick_and_casual row.
+        key = (balance_key(leave.leave_type), leave.start_date.year)
         totals[key] = totals.get(key, 0) + count_weekdays(leave.start_date, leave.end_date)
 
     existing = {

@@ -1,28 +1,32 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Plus, X, CalendarRange } from "lucide-react";
 import Avatar from "../ui/Avatar";
 import Badge from "../ui/Badge";
+import Button from "../ui/Button";
 import Spinner from "../ui/Spinner";
 import CheckInLog from "./CheckInLog";
+import CheckInHistoryModal from "./CheckInHistoryModal";
 import UpcomingLeaves from "./UpcomingLeaves";
+import { useUser } from "../../contexts/UserContext";
+import { RequestLeaveModal } from "../../pages/Leaves";
 import {
   LEAVE_TYPE_META,
   formatDateLong,
-  formatDayMonth,
+  formatBirthday,
   formatTimeOfDay,
   getUserStatus,
   statusBadgeProps,
   toISODate,
 } from "../../lib/utils";
-import { getHolidays, getStatusHistory, getUserBalances, getUserLeaveSummary } from "../../lib/api";
+import { getHolidays, getLeaveRules, getStatusHistory, getUserBalances, getUserLeaveSummary } from "../../lib/api";
 
 const BALANCE_TYPES = ["earned", "sick_and_casual", "bereavement", "marriage", "maternity", "paternity"];
 
 function DetailRow({ label, value }) {
   return (
     <div className="flex items-baseline gap-4 py-1.5">
-      <span className="text-[13.5px] text-slate-400 w-28 shrink-0">{label}</span>
-      <span className="text-[13.5px] text-slate-800 font-medium">{value ?? "—"}</span>
+      <span className="text-[15px] text-slate-400 w-28 shrink-0">{label}</span>
+      <span className="text-[15px] text-slate-800 font-medium">{value ?? "—"}</span>
     </div>
   );
 }
@@ -57,7 +61,14 @@ function BalanceCard({ type, entry }) {
 
 const LOG_DAYS = 28;
 
-export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
+export default function ProfileSidebar({ member, onLeaveIds, onClose, onSelectMember }) {
+  const { user: currentUser } = useUser();
+  const isAdmin = !!currentUser?.is_admin;
+  // A non-admin viewing their own card can request leave for themselves.
+  const isSelf = !!member && member.id === currentUser?.id;
+  const canRequestOwn = !isAdmin && isSelf;
+  const showLeaveButton = isAdmin || canRequestOwn;
+
   const [balances, setBalances] = useState(null);
   const [failed, setFailed] = useState(false);
 
@@ -66,11 +77,23 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
   const [holidays, setHolidays] = useState(null);
   const [historyFailed, setHistoryFailed] = useState(false);
 
+  // The request modal needs the rules, and a bump to reload the member's data
+  // after a leave is logged/requested.
+  const [leaveRules, setLeaveRules] = useState(null);
+  const [addingLeave, setAddingLeave] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
   useEffect(() => {
     const handler = (e) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!showLeaveButton) return;
+    getLeaveRules().then(setLeaveRules).catch(() => setLeaveRules(null));
+  }, [showLeaveButton]);
 
   useEffect(() => {
     if (!member) return;
@@ -81,7 +104,7 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
       .then((b) => { if (!cancelled) setBalances(b); })
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [member?.id]);
+  }, [member?.id, refreshKey]);
 
   // A day cannot be classified without all three, so they load and fail as a unit.
   useEffect(() => {
@@ -104,7 +127,7 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
       })
       .catch(() => { if (!cancelled) setHistoryFailed(true); });
     return () => { cancelled = true; };
-  }, [member?.id]);
+  }, [member?.id, refreshKey]);
 
   if (!member) return null;
 
@@ -115,17 +138,19 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
   const showClockIn = today && (status === "office" || status === "wfh");
 
   return (
+    <>
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
 
-      <div className="absolute right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-xl overflow-y-auto">
+      <div className="absolute right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-xl flex flex-col">
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+          className="absolute top-5 right-5 z-10 p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
         >
           <X size={16} />
         </button>
 
+        <div className="flex-1 overflow-y-auto">
         {/* Header */}
         <div className="px-7 pt-7 pb-6 border-b border-slate-100">
           <div className="flex items-center gap-4">
@@ -149,19 +174,41 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
         <div className="px-7 py-6 border-b border-slate-100">
           <SectionHeading>Employee Details</SectionHeading>
           <DetailRow label="Role" value={member.role} />
-          <DetailRow label="Reports to" value={member.manager?.name} />
+          {member.manager && onSelectMember ? (
+            <div className="flex items-baseline gap-4 py-1.5">
+              <span className="text-[15px] text-slate-400 w-28 shrink-0">Reports to</span>
+              <button
+                onClick={() => onSelectMember(member.manager.id)}
+                className="text-[15px] text-blue-600 font-medium hover:underline text-left"
+              >
+                {member.manager.name}
+              </button>
+            </div>
+          ) : (
+            <DetailRow label="Reports to" value={member.manager?.name} />
+          )}
           <DetailRow label="Joined" value={member.joining_date && formatDateLong(member.joining_date)} />
-          <DetailRow label="Birthday" value={member.birthday && formatDayMonth(member.birthday)} />
+          <DetailRow label="Birthday" value={member.birthday && formatBirthday(member.birthday)} />
         </div>
 
         {/* Contact */}
         <div className="px-7 py-6 border-b border-slate-100">
           <SectionHeading>Contact</SectionHeading>
           <div className="flex items-baseline gap-4 py-1.5">
-            <span className="text-[13.5px] text-slate-400 w-28 shrink-0">Email</span>
-            <a href={`mailto:${member.email}`} className="text-[13.5px] text-blue-600 font-medium hover:underline truncate">
+            <span className="text-[15px] text-slate-400 w-28 shrink-0">Email</span>
+            <a href={`mailto:${member.email}`} className="text-[15px] text-blue-600 font-medium hover:underline truncate">
               {member.email}
             </a>
+          </div>
+          <div className="flex items-baseline gap-4 py-1.5">
+            <span className="text-[15px] text-slate-400 w-28 shrink-0">Phone</span>
+            {member.phone_number ? (
+              <a href={`tel:${member.phone_number.replace(/\s+/g, "")}`} className="text-[15px] text-blue-600 font-medium hover:underline">
+                {member.phone_number}
+              </a>
+            ) : (
+              <span className="text-[15px] text-slate-800 font-medium">—</span>
+            )}
           </div>
         </div>
 
@@ -212,8 +259,49 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose }) {
               holidays={holidays}
             />
           )}
+
+          <button
+            onClick={() => setShowHistory(true)}
+            className="mt-5 inline-flex items-center gap-2 border border-slate-200 rounded-xl px-4 py-2.5 text-[14px] font-semibold text-blue-600 hover:bg-slate-50 transition-colors"
+          >
+            <CalendarRange size={16} />
+            View full history →
+          </button>
         </div>
+        </div>
+
+        {/* Always-visible action row */}
+        {showLeaveButton && (
+          <div className="border-t border-slate-200 px-7 py-4 bg-white">
+            <Button variant="primary" size="xl" className="w-full" onClick={() => setAddingLeave(true)}>
+              <Plus size={16} />
+              {isAdmin ? "Add leave" : "Request leave"}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
+
+    {showLeaveButton && (
+      <RequestLeaveModal
+        open={addingLeave}
+        onClose={() => setAddingLeave(false)}
+        onSuccess={() => { setAddingLeave(false); setRefreshKey((k) => k + 1); }}
+        holidays={holidays ?? []}
+        leaveRules={leaveRules}
+        balances={balances}
+        unconstrained={isAdmin}
+        isAdmin={isAdmin}
+        adminForUser={isAdmin ? member : null}
+      />
+    )}
+
+    <CheckInHistoryModal
+      open={showHistory}
+      onClose={() => setShowHistory(false)}
+      member={member}
+      holidays={holidays ?? []}
+    />
+    </>
   );
 }

@@ -65,10 +65,16 @@ export default function HierarchyGraph({ users, onChangeManager }) {
   // Cancel in-flight animation work when the view unmounts. The original
   // implementation left a setTimeout running past unmount. mountedRef also
   // stops a save that resolves after unmount from scheduling fresh work.
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    if (timerRef.current) clearTimeout(timerRef.current);
+  // mountedRef must be (re)set true on setup: under StrictMode the mount runs
+  // setup→cleanup→setup, so a cleanup-only effect would leave it stuck false and
+  // every save would bail after its await with "Saving…" still showing.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
   }, []);
 
   useEffect(() => {

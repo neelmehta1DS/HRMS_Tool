@@ -16,3 +16,14 @@ def count_weekdays(start: date, end: date) -> int:
             count += 1
         current += timedelta(days=1)
     return count
+
+
+def add_working_days(from_date: date, days: int) -> date:
+    """Return the date that is `days` working days after from_date."""
+    current = from_date
+    count = 0
+    while count < days:
+        current += timedelta(days=1)
+        if current.weekday() < 5 and current not in HOLIDAY_DATES:
+            count += 1
+    return current

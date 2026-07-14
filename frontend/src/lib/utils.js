@@ -1,5 +1,9 @@
 export const LEAVE_TYPE_META = {
   earned:          { label: "Earned",            color: "#3b82f6", bg: "#dbeafe", text: "#1e3a8a" },
+  sick:            { label: "Sick",              color: "#15803d", bg: "#dcfce7", text: "#14532d" },
+  casual:          { label: "Casual",            color: "#b45309", bg: "#fef3c7", text: "#78350f" },
+  // Not a leave anyone takes — the shared pool `sick` and `casual` draw from.
+  // Labels the balance bar; never appears as a leave's own type.
   sick_and_casual: { label: "Sick & Casual",     color: "#15803d", bg: "#dcfce7", text: "#14532d" },
   bereavement:     { label: "Bereavement",       color: "#8b5cf6", bg: "#ede9fe", text: "#4c1d95" },
   marriage:        { label: "Marriage",          color: "#ec4899", bg: "#fce7f3", text: "#831843" },
@@ -7,6 +11,20 @@ export const LEAVE_TYPE_META = {
   paternity:       { label: "Paternity",         color: "#0ea5e9", bg: "#e0f2fe", text: "#0c4a6e" },
   lwp:             { label: "Leave Without Pay", color: "#64748b", bg: "#e2e8f0", text: "#334155" },
 };
+
+const BALANCE_BUCKET = { sick: "sick_and_casual", casual: "sick_and_casual" };
+
+/** Leave types a user can actually request. Excludes `sick_and_casual`, which is
+ *  a balance pool — the API rejects it as a leave_type. Mirrors the backend's
+ *  REQUESTABLE_LEAVE_TYPES. */
+export const REQUESTABLE_LEAVE_TYPES = Object.keys(LEAVE_TYPE_META)
+  .filter((t) => t !== "sick_and_casual");
+
+/** The balance pool a leave type draws from. Mirrors balance_key() on the backend.
+ *  The /balances payload is keyed by pool, so it has no `sick` or `casual` entry. */
+export function balanceKey(leaveType) {
+  return BALANCE_BUCKET[leaveType] ?? leaveType;
+}
 
 const AVATAR_PALETTE = [
   "#3B82F6", "#6366F1", "#8B5CF6", "#EC4899",
@@ -54,9 +72,8 @@ export function formatDateShort(s) {
 }
 
 export function formatDateLong(s) {
-  return new Date(s + "T00:00:00").toLocaleDateString("en-GB", {
-    day: "numeric", month: "short", year: "numeric",
-  });
+  const d = new Date(s + "T00:00:00");
+  return `${ordinal(d.getDate())} ${d.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}`;
 }
 
 // Status timestamps arrive as naive IST, so parsing them as local is correct.
@@ -66,11 +83,15 @@ export function formatTimeOfDay(s) {
   });
 }
 
-// Birthdays store a year that we never surface.
-export function formatDayMonth(s) {
-  return new Date(s + "T00:00:00").toLocaleDateString("en-GB", {
-    day: "numeric", month: "short",
-  });
+function ordinal(n) {
+  const suffixes = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
+}
+
+// e.g. "3rd Aug 2006"
+export function formatBirthday(s) {
+  return formatDateLong(s);
 }
 
 export function formatDateTime(s) {

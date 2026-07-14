@@ -7,6 +7,7 @@ import UserManagement from "./UserManagement";
 vi.mock("../../lib/api", () => ({
   getAdminUsers: vi.fn(),
   getHolidays: vi.fn(),
+  getLeaveRules: vi.fn(),
   getUserOverview: vi.fn(),
   adminDeleteUser: vi.fn(),
   adminDeleteLeave: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock("../../lib/api", () => ({
   adminUpdateCatchup: vi.fn(),
 }));
 
-import { getAdminUsers, getHolidays, getUserOverview } from "../../lib/api";
+import { getAdminUsers, getHolidays, getLeaveRules, getUserOverview, adminCreateLeave } from "../../lib/api";
 
 const USERS = [
   { id: 1, name: "Arjun Desai", role: "CEO", email: "arjun@x.ai" },
@@ -60,6 +61,7 @@ beforeEach(() => {
   sessionStorage.clear();
   getAdminUsers.mockResolvedValue(USERS);
   getHolidays.mockResolvedValue([]);
+  getLeaveRules.mockResolvedValue({ earned_advance_notice: [], casual_advance_notice: [] });
   getUserOverview.mockResolvedValue(OVERVIEW);
 });
 
@@ -173,6 +175,31 @@ describe("UserManagement", () => {
     // has passed; the normal table hides edit for those.
     expect(screen.getByRole("button", { name: /Edit Earned leave/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Delete Earned leave/i })).toBeInTheDocument();
+  });
+
+  it("adds a leave through the shared request modal, aimed at the selected user", async () => {
+    adminCreateLeave.mockResolvedValue({ id: 99 });
+    const user = userEvent.setup();
+    await selectPriya(user);
+
+    await user.click(screen.getByRole("button", { name: /Add leave/i }));
+
+    // The same modal employees use, titled for this person.
+    expect(await screen.findByText("Log leave for Priya Sharma")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Planned time off/i })); // Earned
+    await user.click(screen.getByRole("button", { name: /select a date/i }));
+    // allowAny makes every day selectable, including today's month.
+    await user.click(screen.getByRole("button", { name: "20" }));
+    await user.type(screen.getByPlaceholderText("Reason for leave…"), "Conference");
+    await user.click(screen.getByRole("button", { name: "Log leave" }));
+
+    await waitFor(() =>
+      expect(adminCreateLeave).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ leave_type: "earned", note: "Conference" })
+      )
+    );
   });
 
   it("switches to catchups", async () => {

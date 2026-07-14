@@ -5,12 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from schemas.leaves import LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest, LeaveBalanceEntry, LeaveSummaryResponse
-from models.leaves import Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus, SPECIAL_LEAVE_TYPES
+from models.leaves import (
+    Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus,
+    SPECIAL_LEAVE_TYPES, BALANCE_POOLS, LEAVE_TYPE_LABELS, balance_key,
+)
 from models.users import User, RoleLevel
 from core.security import get_current_user
 from core.holidays import HOLIDAYS, HOLIDAY_DATES
-from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_earned_notice_days
-from core.workdays import count_weekdays
+from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_notice_days
+from core.leave_policy import evaluate as evaluate_policy
+from core.workdays import count_weekdays, add_working_days
 from core import slack
 from db.database import get_db
 
@@ -35,17 +39,6 @@ def ensure_working_days(start: date, end: date) -> int:
     return days
 
 
-def add_working_days(from_date: date, days: int) -> date:
-    """Return the date that is `days` working days after from_date."""
-    current = from_date
-    count = 0
-    while count < days:
-        current += timedelta(days=1)
-        if current.weekday() < 5 and current not in HOLIDAY_DATES:
-            count += 1
-    return current
-
-
 def earliest_earned_start(today: date, notice_days: int) -> date:
     """Return the earliest calendar date that satisfies the notice requirement."""
     return today + timedelta(days=notice_days)
@@ -54,16 +47,18 @@ def earliest_earned_start(today: date, notice_days: int) -> date:
 # ─── Balance helpers ───────────────────────────────────────────────────────────
 
 def get_or_create_balance(db: Session, user_id: int, leave_type: LeaveType, year: int) -> LeaveBalance:
-    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=leave_type, year=year).first()
+    bucket = balance_key(leave_type)
+    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=bucket, year=year).first()
     if bal is None:
-        bal = LeaveBalance(user_id=user_id, leave_type=leave_type, year=year, days_taken=0)
+        bal = LeaveBalance(user_id=user_id, leave_type=bucket, year=year, days_taken=0)
         db.add(bal)
         db.flush()
     return bal
 
 
 def get_days_taken(db: Session, user_id: int, leave_type: LeaveType, year: int) -> int:
-    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=leave_type, year=year).first()
+    bucket = balance_key(leave_type)
+    bal = db.query(LeaveBalance).filter_by(user_id=user_id, leave_type=bucket, year=year).first()
     return bal.days_taken if bal else 0
 
 
@@ -75,7 +70,7 @@ def exceeds_limit(leave_type: LeaveType, taken: int, days: int) -> bool:
     The single definition of "over limit". A null limit (LWP) never exceeds, and
     landing exactly on the limit is allowed.
     """
-    limit = LEAVE_LIMITS.get(str(leave_type))
+    limit = LEAVE_LIMITS.get(str(balance_key(leave_type)))
     return limit is not None and (taken + days) > limit
 
 
@@ -93,9 +88,12 @@ def enforce_leave_limit(db: Session, user_id: int, leave_type: LeaveType, days: 
     if not exceeds_limit(leave_type, taken, days):
         return
 
-    limit = LEAVE_LIMITS[str(leave_type)]
+    # Names the shared pool, not the requested type: a casual request can be
+    # blocked by sick days already taken, and the message has to explain that.
+    bucket = balance_key(leave_type)
+    limit = LEAVE_LIMITS[str(bucket)]
     remaining = max(0, limit - taken)
-    label = str(leave_type).replace("_", " ").title()
+    label = LEAVE_TYPE_LABELS[bucket]
     day_word = "day" if days == 1 else "days"
     raise HTTPException(
         status_code=422,
@@ -133,8 +131,10 @@ def compute_balances(db: Session, user_id: int, year: int) -> dict[str, LeaveBal
     )
     taken_by_type = {str(lt): days for lt, days in rows}
 
+    # Keyed by balance bucket, so there is one shared `sick_and_casual` entry and
+    # no `sick` / `casual` entries. Consumers look up a type's pool via balance_key.
     result = {}
-    for lt in LeaveType:
+    for lt in BALANCE_POOLS:
         taken = taken_by_type.get(str(lt), 0)
         limit = LEAVE_LIMITS.get(str(lt))
         remaining = (limit - taken) if limit is not None else None
@@ -407,35 +407,21 @@ def create_leave(
     # leave is meaningless regardless of who requests it.
     days = ensure_working_days(leave.start_date, effective_end)
 
-    # ── Sick & Casual ──────────────────────────────────────────────────────────
-    if leave.leave_type == LeaveType.sick_and_casual:
-        cutoff_hour = LEAVE_RULES.get("sick_and_casual_cutoff_hour", 10)
-        cutoff_min = LEAVE_RULES.get("sick_and_casual_cutoff_min", 0)
-        is_today = (leave.start_date == today and effective_end == today)
-        before_cutoff = (now.hour * 60 + now.minute) < (cutoff_hour * 60 + cutoff_min)
-        auto_approve = is_admin or (is_today and before_cutoff)
-
-    # ── Earned ────────────────────────────────────────────────────────────────
-    elif leave.leave_type == LeaveType.earned:
-        if not unconstrained and not leave.is_exception:
-            duration = days
-            notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
-            required_notice = get_earned_notice_days(duration, notice_rules)
-            calendar_days_ahead = (leave.start_date - today).days
-            if calendar_days_ahead < required_notice:
-                earliest = today + timedelta(days=required_notice)
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Earned leave ({duration} working day{'s' if duration != 1 else ''}) requires "
-                        f"{required_notice} calendar days notice. Earliest start: {earliest}."
-                    ),
-                )
-        auto_approve = False
-
-    # ── Special types ─────────────────────────────────────────────────────────
-    else:
-        auto_approve = False
+    # ── Type-specific rules ───────────────────────────────────────────────────
+    decision = evaluate_policy(
+        leave.leave_type,
+        leave.start_date,
+        days,
+        now,
+        today,
+        unconstrained=unconstrained,
+        is_exception=leave.is_exception,
+    )
+    if decision.error:
+        raise HTTPException(status_code=422, detail=decision.error)
+    # The type's own rule may pre-approve (sick before the cutoff); admins and
+    # managerless users are approved on arrival whatever the type says.
+    auto_approve = decision.auto_approve or unconstrained
 
     # ── Overlap check ─────────────────────────────────────────────────────────
     overlap = db.query(Leave).filter(
@@ -459,11 +445,10 @@ def create_leave(
     over_limit = would_exceed_limit(db, current_user.id, leave.leave_type, days, year)
 
     # ── Build approval chain ──────────────────────────────────────────────────
+    # `unconstrained` already covers the no-manager case, so auto_approve is
+    # guaranteed True here whenever `manager` is None.
     manager = current_user.manager
     skip = manager.manager if manager else None
-
-    if not manager:
-        auto_approve = True  # no manager = auto-approve regardless of type
 
     new_leave = Leave(
         user_id=current_user.id,
@@ -708,16 +693,21 @@ def update_leave(
     # Runs whenever either date moves, not just the start date.
     duration = ensure_working_days(new_start, new_end)
 
-    # Re-validate notice for earned leave if dates changed
-    if leave.leave_type == LeaveType.earned and not leave.is_exception and body.start_date is not None:
-        notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
-        required_notice = get_earned_notice_days(duration, notice_rules)
-        if (new_start - today).days < required_notice:
-            earliest = today + timedelta(days=required_notice)
-            raise HTTPException(
-                status_code=422,
-                detail=f"Earned leave requires {required_notice} calendar days notice. Earliest start: {earliest}.",
-            )
+    # Re-validate the type's date rules when the start moves — the notice ladder
+    # for earned/casual, and sick's must-start-today. The decision's auto_approve
+    # is irrelevant here: an edit never changes a pending leave's status.
+    if body.start_date is not None:
+        decision = evaluate_policy(
+            leave.leave_type,
+            new_start,
+            duration,
+            datetime.now(),
+            today,
+            unconstrained=current_user.is_admin or current_user.manager is None,
+            is_exception=leave.is_exception,
+        )
+        if decision.error:
+            raise HTTPException(status_code=422, detail=decision.error)
 
     # Overlap check excluding self
     overlap = db.query(Leave).filter(

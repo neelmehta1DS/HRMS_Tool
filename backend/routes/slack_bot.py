@@ -17,7 +17,7 @@ from routes.leaves import (
     count_weekdays, add_working_days, ensure_working_days,
     get_or_create_balance, enforce_leave_limit,
 )
-from core.leave_limits import LEAVE_RULES, get_earned_notice_days
+from core.leave_policy import evaluate as evaluate_policy
 
 router = APIRouter(prefix="/bot", tags=["slack-bot"])
 
@@ -83,33 +83,26 @@ def create_leave_for_user(
     today = date.today()
     now = datetime.now()
 
-    if body.leave_type == LeaveType.sick_and_casual:
-        cutoff_hour = LEAVE_RULES.get("sick_and_casual_cutoff_hour", 10)
-        cutoff_min = LEAVE_RULES.get("sick_and_casual_cutoff_min", 0)
-        is_today = (start == today and end == today)
-        before_cutoff = (now.hour * 60 + now.minute) < (cutoff_hour * 60 + cutoff_min)
-        auto_approve = is_today and before_cutoff
-    elif body.leave_type == LeaveType.earned and not user.is_admin:
-        duration = days
-        notice_rules = LEAVE_RULES.get("earned_advance_notice", [])
-        required_notice = get_earned_notice_days(duration, notice_rules)
-        calendar_days_ahead = (start - today).days
-        if calendar_days_ahead < required_notice:
-            earliest = today + timedelta(days=required_notice)
-            raise HTTPException(status_code=422,
-                detail=f"Earned leave ({duration} working day{'s' if duration > 1 else ''}) requires "
-                       f"{required_notice} calendar days notice. Earliest start: {earliest}.")
-        auto_approve = False
-    else:
-        auto_approve = False
+    unconstrained = user.is_admin or user.manager is None
+
+    decision = evaluate_policy(
+        body.leave_type,
+        start,
+        days,
+        now,
+        today,
+        unconstrained=unconstrained,
+        is_exception=False,  # the bot has no exception path
+    )
+    if decision.error:
+        raise HTTPException(status_code=422, detail=decision.error)
+    auto_approve = decision.auto_approve or unconstrained
 
     if not user.is_admin:
         enforce_leave_limit(db, user.id, body.leave_type, days, start.year)
 
     manager = user.manager
     skip = manager.manager if manager else None
-    if not manager:
-        auto_approve = True
 
     leave = Leave(
         user_id=user.id,

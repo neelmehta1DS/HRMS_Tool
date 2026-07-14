@@ -1,7 +1,19 @@
+import random
 from datetime import date
 
 from sqlalchemy.orm import Session
 from models.users import User, OfficeStatus
+
+
+def _india_phone(email: str) -> str:
+    """A stable, fake +91 mobile number derived from the email.
+
+    Deterministic per email so it survives restarts, and only ever applied to
+    users who have no number yet — an admin's edits are never clobbered.
+    """
+    rng = random.Random(email)
+    digits = rng.choice("6789") + "".join(rng.choice("0123456789") for _ in range(9))
+    return f"+91 {digits[:5]} {digits[5:]}"
 
 
 # -------------------------------------------------
@@ -250,3 +262,12 @@ def seed_users(db: Session):
         "birthday": date(2000, 7, 17),
         "joining_date": date(2024, 10, 21),
     })
+
+    # Give everyone a fake phone number, but only if they don't already have one,
+    # so restarts and admin edits both stick.
+    changed = False
+    for u in db.query(User).filter(User.phone_number.is_(None)).all():
+        u.phone_number = _india_phone(u.email)
+        changed = True
+    if changed:
+        db.commit()

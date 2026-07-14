@@ -26,6 +26,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(unique=True, index=True)
     name: Mapped[str]
     role: Mapped[str]
+    phone_number: Mapped[Optional[str]] = mapped_column(default=None)
 
     # Hierarchy
     manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), default=None)
