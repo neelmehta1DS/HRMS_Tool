@@ -9,6 +9,7 @@ import CheckInHistoryModal from "./CheckInHistoryModal";
 import UpcomingLeaves from "./UpcomingLeaves";
 import { useUser } from "../../contexts/UserContext";
 import { RequestLeaveModal } from "../../pages/Leaves";
+import { HygieneDetailBlock } from "../leaves/LeaveHygiene";
 import {
   LEAVE_TYPE_META,
   formatDateLong,
@@ -18,7 +19,7 @@ import {
   statusBadgeProps,
   toISODate,
 } from "../../lib/utils";
-import { getHolidays, getLeaveRules, getStatusHistory, getUserBalances, getUserLeaveSummary } from "../../lib/api";
+import { getHolidays, getLeaveRules, getStatusHistory, getUserBalances, getUserHygiene, getUserLeaveSummary } from "../../lib/api";
 
 const BALANCE_TYPES = ["earned", "sick_and_casual", "bereavement", "marriage", "maternity", "paternity"];
 
@@ -70,6 +71,7 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose, onSelectMe
   const showLeaveButton = isAdmin || canRequestOwn;
 
   const [balances, setBalances] = useState(null);
+  const [hygiene, setHygiene] = useState(null);
   const [failed, setFailed] = useState(false);
 
   const [statusDays, setStatusDays] = useState(null);
@@ -105,6 +107,19 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose, onSelectMe
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [member?.id, refreshKey]);
+
+  // Hygiene: admins see everyone's; other users see only their own. The block
+  // self-hides on null, so L2 leads and unauthorised views render nothing.
+  useEffect(() => {
+    if (!member) return;
+    let cancelled = false;
+    setHygiene(null);
+    if (!isAdmin && !isSelf) return;
+    getUserHygiene(member.id)
+      .then((h) => { if (!cancelled) setHygiene(h); })
+      .catch(() => { /* self-hides */ });
+    return () => { cancelled = true; };
+  }, [member?.id, refreshKey, isAdmin, isSelf]);
 
   // A day cannot be classified without all three, so they load and fail as a unit.
   useEffect(() => {
@@ -236,6 +251,15 @@ export default function ProfileSidebar({ member, onLeaveIds, onClose, onSelectMe
             </>
           )}
         </div>
+
+        {/* Planning hygiene — mirrors the leaves side drawer's order (balances,
+            then hygiene). Renders nothing if hygiene is null. */}
+        {hygiene && (
+          <div className="px-7 py-6 border-b border-slate-100">
+            <SectionHeading>Planning Hygiene</SectionHeading>
+            <HygieneDetailBlock hygiene={hygiene} />
+          </div>
+        )}
 
         {/* Upcoming leaves */}
         <div className="px-7 py-6 border-b border-slate-100">

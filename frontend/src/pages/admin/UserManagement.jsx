@@ -14,10 +14,11 @@ import UserSelect from "../../components/admin/UserSelect";
 import UserFormModal from "../../components/admin/UserFormModal";
 import LeaveFormModal from "../../components/admin/LeaveFormModal";
 import CatchupFormModal from "../../components/admin/CatchupFormModal";
+import { PlanningHygieneCard } from "../../components/leaves/LeaveHygiene";
 import { RequestLeaveModal } from "../Leaves";
 import {
   adminDeleteCatchup, adminDeleteLeave, adminDeleteUser,
-  getAdminUsers, getHolidays, getLeaveRules, getUserOverview,
+  getAdminUsers, getHolidays, getLeaveRules, getUserHygiene, getUserOverview,
 } from "../../lib/api";
 import {
   LEAVE_TYPE_META, eachDayISO,
@@ -112,6 +113,7 @@ export default function UserManagement() {
   }, [setSearchParams]);
 
   const [overview, setOverview] = useState(null);
+  const [hygiene, setHygiene] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -148,7 +150,14 @@ export default function UserManagement() {
     setLoading(true);
     setError("");
     try {
-      setOverview(await getUserOverview(selectedId));
+      // Hygiene loads in parallel with the overview; it self-hides on null so
+      // a failure or a managerless (L2) user just renders nothing.
+      const [ov, hy] = await Promise.all([
+        getUserOverview(selectedId),
+        getUserHygiene(selectedId).catch(() => null),
+      ]);
+      setOverview(ov);
+      setHygiene(hy);
     } catch (e) {
       // A remembered or shared id can point at someone since deleted.
       if (e?.response?.status === 404) {
@@ -157,12 +166,13 @@ export default function UserManagement() {
         setError("Couldn't load this user.");
       }
       setOverview(null);
+      setHygiene(null);
     } finally {
       setLoading(false);
     }
   }, [selectedId, setSelectedId]);
 
-  useEffect(() => { setOverview(null); refresh(); }, [refresh]);
+  useEffect(() => { setOverview(null); setHygiene(null); refresh(); }, [refresh]);
 
   // The check-in log paints leave days; derive them from the approved leaves we
   // already have rather than asking the server again.
@@ -320,13 +330,22 @@ export default function UserManagement() {
               />
 
               {tab === "leaves" && (
-                <Section title="Leave Balances" description={`${new Date().getFullYear()}`}>
-                  <div className="grid grid-cols-4 xl:grid-cols-7 gap-3">
-                    {Object.entries(overview.balances).map(([type, entry]) => (
-                      <BalanceCard key={type} type={type} entry={entry} />
-                    ))}
+                <div className={`grid ${hygiene ? "grid-cols-1 lg:grid-cols-4" : "grid-cols-1"} gap-6`}>
+                  <div className={hygiene ? "lg:col-span-3" : ""}>
+                    <Section title="Leave Balances" description={`${new Date().getFullYear()}`}>
+                      <div className="grid grid-cols-4 xl:grid-cols-7 gap-3">
+                        {Object.entries(overview.balances).map(([type, entry]) => (
+                          <BalanceCard key={type} type={type} entry={entry} />
+                        ))}
+                      </div>
+                    </Section>
                   </div>
-                </Section>
+                  {hygiene && (
+                    <div className="lg:col-span-1">
+                      <PlanningHygieneCard hygiene={hygiene} />
+                    </div>
+                  )}
+                </div>
               )}
 
               {tab === "leaves" && (
