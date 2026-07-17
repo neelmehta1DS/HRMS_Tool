@@ -1,7 +1,8 @@
 from datetime import date, datetime
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Date, DateTime, ForeignKey, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index
+from core.time import now_ist
 from db.database import Base
 
 if TYPE_CHECKING:
@@ -26,4 +27,10 @@ class Catchup(Base):
     background_creation_finished: Mapped[bool] = mapped_column(default=False)
     date_and_time: Mapped[datetime] = mapped_column(DateTime)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
+
+    __table_args__ = (
+        Index("ix_catchups_employee_id", "employee_id"),
+        Index("ix_catchups_manager_id", "manager_id"),
+        Index("ix_catchups_date", "date_and_time"),
+    )

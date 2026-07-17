@@ -1,13 +1,19 @@
-from typing import Annotated
-from datetime import datetime, timedelta, date
+from typing import Annotated, Optional
+from datetime import timedelta, date
+
+from core.time import now_ist, today_ist
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import Session
-from schemas.leaves import LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest, LeaveBalanceEntry, LeaveSummaryResponse
+from schemas.leaves import (
+    LeaveCreate, LeaveUpdate, LeaveResponse, LeaveRejectRequest,
+    LeaveBalanceEntry, LeaveSummaryResponse, LeaveHygieneResponse,
+)
+from core import leave_hygiene
 from models.leaves import (
     Leave, LeaveApproval, LeaveBalance, LeaveType, LeaveStatus, ApprovalStatus,
-    SPECIAL_LEAVE_TYPES, BALANCE_POOLS, LEAVE_TYPE_LABELS, balance_key,
+    SPECIAL_LEAVE_TYPES, BALANCE_POOLS, LEAVE_TYPE_LABELS, balance_key, leave_phrase,
 )
 from models.users import User, RoleLevel
 from core.security import get_current_user
@@ -16,6 +22,7 @@ from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, get_notice_days
 from core.leave_policy import evaluate as evaluate_policy
 from core.workdays import count_weekdays, add_working_days
 from core import slack
+from core.loaders import LEAVE_LOADS
 from db.database import get_db
 
 router = APIRouter(prefix="/leaves", tags=["leaves"])
@@ -147,7 +154,7 @@ def get_my_balances(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, LeaveBalanceEntry]:
-    return compute_balances(db, current_user.id, datetime.now().year)
+    return compute_balances(db, current_user.id, today_ist().year)
 
 
 # Must stay below /me/balances: declared first, "me" would be coerced into
@@ -160,7 +167,32 @@ def get_user_balances(
 ) -> dict[str, LeaveBalanceEntry]:
     if not db.get(User, user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-    return compute_balances(db, user_id, datetime.now().year)
+    return compute_balances(db, user_id, today_ist().year)
+
+
+# ─── Leave hygiene score ──────────────────────────────────────────────────────
+
+@router.get("/me/hygiene", response_model=Optional[LeaveHygieneResponse])
+def get_my_hygiene(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Optional[LeaveHygieneResponse]:
+    """This user's leave-hygiene score, or null for a managerless (L2) lead."""
+    return leave_hygiene.compute(db, current_user)
+
+
+# Must stay below /me/hygiene: declared first, "me" would be coerced into
+# user_id and 422.
+@router.get("/{user_id}/hygiene", response_model=Optional[LeaveHygieneResponse])
+def get_user_hygiene(
+    user_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Optional[LeaveHygieneResponse]:
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    return leave_hygiene.compute(db, user)
 
 
 def days_between(start: date, end: date) -> list[date]:
@@ -185,7 +217,7 @@ def get_user_leave_summary(
     if not db.get(User, user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
 
-    today = datetime.now().date()
+    today = today_ist()
     window_start = today - timedelta(days=days - 1)
 
     upcoming = (
@@ -223,7 +255,7 @@ def get_current_leaves(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    today = datetime.now().date()
+    today = today_ist()
     two_weeks_from_now = today + timedelta(weeks=2)
 
     current_leaves = db.query(Leave).where(
@@ -248,32 +280,16 @@ def get_my_leaves(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    today = datetime.now().date()
+    today = today_ist()
     uid = current_user.id
 
-    pending = db.query(Leave).where(
-        Leave.user_id == uid,
-        Leave.status == LeaveStatus.pending,
-        Leave.start_date >= today,
-    ).all()
+    # One round-trip for all of this user's leaves, then bucket in Python.
+    leaves = db.query(Leave).options(*LEAVE_LOADS).where(Leave.user_id == uid).all()
 
-    upcoming = db.query(Leave).where(
-        Leave.user_id == uid,
-        Leave.status == LeaveStatus.approved,
-        Leave.start_date >= today,
-    ).all()
-
-    rejected = db.query(Leave).where(
-        Leave.user_id == uid,
-        Leave.status == LeaveStatus.rejected,
-        Leave.start_date >= today,
-    ).all()
-
-    previous = db.query(Leave).where(
-        Leave.user_id == uid,
-        Leave.status == LeaveStatus.approved,
-        Leave.end_date < today,
-    ).all()
+    pending  = [l for l in leaves if l.status == LeaveStatus.pending  and l.start_date >= today]
+    upcoming = [l for l in leaves if l.status == LeaveStatus.approved and l.start_date >= today]
+    rejected = [l for l in leaves if l.status == LeaveStatus.rejected and l.start_date >= today]
+    previous = [l for l in leaves if l.status == LeaveStatus.approved and l.end_date  <  today]
 
     return {"pending": pending, "upcoming": upcoming, "rejected": rejected, "previous": previous}
 
@@ -288,30 +304,25 @@ def get_team_leaves(
     if current_user.role_level == RoleLevel.ic:
         raise HTTPException(status_code=403, detail="Managers only")
 
-    today = datetime.now().date()
+    today = today_ist()
     year = today.year
 
-    pending = db.query(Leave).where(
-        Leave.status == LeaveStatus.pending,
-        Leave.start_date >= today,
+    # One round-trip for every leave that could land in a bucket, then split in
+    # Python: anything from today onward, plus past approved leaves.
+    window = db.query(Leave).options(*LEAVE_LOADS).where(
+        or_(
+            Leave.start_date >= today,
+            and_(Leave.status == LeaveStatus.approved, Leave.end_date < today),
+        )
     ).all()
 
-    upcoming = db.query(Leave).where(
-        Leave.status == LeaveStatus.approved,
-        Leave.start_date >= today,
-    ).all()
-
-    rejected = db.query(Leave).where(
-        Leave.status == LeaveStatus.rejected,
-        Leave.start_date >= today,
-    ).all()
-
-    previous = db.query(Leave).where(
-        Leave.status == LeaveStatus.approved,
-        Leave.end_date < today,
-    ).all()
+    pending  = [l for l in window if l.status == LeaveStatus.pending  and l.start_date >= today]
+    upcoming = [l for l in window if l.status == LeaveStatus.approved and l.start_date >= today]
+    rejected = [l for l in window if l.status == LeaveStatus.rejected and l.start_date >= today]
+    previous = [l for l in window if l.status == LeaveStatus.approved and l.end_date  <  today]
 
     balance_cache: dict[int, dict[str, LeaveBalanceEntry]] = {}
+    hygiene_cache: dict[int, Optional[LeaveHygieneResponse]] = {}
 
     def enrich(leaves: list[Leave]) -> list[LeaveResponse]:
         out = []
@@ -320,6 +331,9 @@ def get_team_leaves(
             if leave.user_id not in balance_cache:
                 balance_cache[leave.user_id] = compute_balances(db, leave.user_id, year)
             r.user_balances = balance_cache[leave.user_id]
+            if leave.user_id not in hygiene_cache:
+                hygiene_cache[leave.user_id] = leave_hygiene.compute(db, leave.user)
+            r.user_hygiene = hygiene_cache[leave.user_id]
             days = count_weekdays(leave.start_date, leave.end_date)
             entry = r.user_balances.get(str(leave.leave_type))
             taken = entry.taken if entry else 0
@@ -342,7 +356,7 @@ def get_my_leaves_as_manager(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    today = datetime.now().date()
+    today = today_ist()
 
     min_pending = (
         db.query(
@@ -356,6 +370,7 @@ def get_my_leaves_as_manager(
 
     pending_leaves = (
         db.query(Leave)
+        .options(*LEAVE_LOADS)
         .join(LeaveApproval, LeaveApproval.leave_id == Leave.id)
         .join(min_pending, and_(
             min_pending.c.leave_id == Leave.id,
@@ -376,6 +391,7 @@ def get_my_leaves_as_manager(
         days = count_weekdays(leave.start_date, leave.end_date)
         r.over_limit = would_exceed_limit(db, leave.user_id, leave.leave_type, days, year)
         r.user_balances = compute_balances(db, leave.user_id, year)
+        r.user_hygiene = leave_hygiene.compute(db, leave.user)
         return r
 
     return [with_over_limit(l) for l in pending_leaves]
@@ -389,8 +405,8 @@ def create_leave(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    today = date.today()
-    now = datetime.now()
+    today = today_ist()
+    now = now_ist()
     effective_end = leave.end_date or leave.start_date
     is_admin = current_user.is_admin
     # Users with no manager (L2 leads) auto-approve their own leaves, so no policy
@@ -483,32 +499,28 @@ def create_leave(
         bal.days_taken += days
 
     # ── Slack notifications ───────────────────────────────────────────────────
-    date_str = (
-        str(new_leave.start_date)
-        if new_leave.start_date == new_leave.end_date
-        else f"{new_leave.start_date} → {new_leave.end_date}"
-    )
-    type_label = str(leave.leave_type).replace("_", " ").title()
+    date_str = slack.date_range(new_leave.start_date, new_leave.end_date)
+    phrase = leave_phrase(leave.leave_type)
     day_word = "day" if days == 1 else "days"
 
     if auto_approve:
         if current_user.slack_user_id:
             slack.dm(current_user.slack_user_id,
-                text=f"Leave #{new_leave.id} auto-approved.",
+                text=f"Your {phrase} request was approved.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":white_check_mark: *Leave #{new_leave.id} auto-approved & logged.*\n"
-                            f"_{type_label} · {date_str} · {days} working {day_word}._"}}])
+                    "text": f":white_check_mark: Your *{phrase}* request for *{date_str}* "
+                            f"({days} working {day_word}) has been approved automatically. Enjoy your time off!"}}])
     elif leave.is_exception and skip:
         step2_row = approval_rows[0]
         if current_user.slack_user_id:
             slack.dm(current_user.slack_user_id,
-                text=f"Leave #{new_leave.id} submitted as exception.",
+                text=f"Your {phrase} request was submitted.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted as an exception* — "
-                            f"{type_label} · {date_str} · {days} working {day_word}.\n"
-                            f"Awaiting approval from *{skip.name}* (notice rules waived)."}}])
+                    "text": f":hourglass_flowing_sand: Your *{phrase}* request for *{date_str}* "
+                            f"({days} working {day_word}) has been submitted as an exception.\n"
+                            f"Awaiting approval from *{skip.name}*."}}])
         if skip.slack_user_id:
-            msg = slack.dm(skip.slack_user_id, **slack.approver_payload(new_leave, current_user, "Exception — direct approval", days, over_limit))
+            msg = slack.dm(skip.slack_user_id, **slack.approver_payload(new_leave, current_user, days, over_limit))
             if msg:
                 step2_row.slack_channel = msg["channel"]
                 step2_row.slack_ts = msg["ts"]
@@ -517,14 +529,13 @@ def create_leave(
         if current_user.slack_user_id:
             awaiting = f"*{manager.name}*" + (f", then *{skip.name}*." if skip else ".")
             slack.dm(current_user.slack_user_id,
-                text=f"Leave #{new_leave.id} submitted.",
+                text=f"Your {phrase} request was submitted.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":hourglass_flowing_sand: *Leave #{new_leave.id} submitted* — "
-                            f"{type_label} · {date_str} · {days} working {day_word}.\n"
+                    "text": f":hourglass_flowing_sand: Your *{phrase}* request for *{date_str}* "
+                            f"({days} working {day_word}) has been submitted.\n"
                             f"Awaiting approval from {awaiting}"}}])
         if manager.slack_user_id:
-            step_label = "Single approval" if not skip else "Step 1 of 2"
-            msg = slack.dm(manager.slack_user_id, **slack.approver_payload(new_leave, current_user, step_label, days, over_limit))
+            msg = slack.dm(manager.slack_user_id, **slack.approver_payload(new_leave, current_user, days, over_limit))
             if msg:
                 step1_row.slack_channel = msg["channel"]
                 step1_row.slack_ts = msg["ts"]
@@ -561,7 +572,7 @@ def approve_leave(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your leave request to approve")
 
     approval_step.status = ApprovalStatus.approved
-    approval_step.decided_at = datetime.utcnow()
+    approval_step.decided_at = now_ist()
     db.flush()
 
     remaining = (
@@ -580,8 +591,8 @@ def approve_leave(
         bal = get_or_create_balance(db, user.id, leave.leave_type, year)
         bal.days_taken += days
 
-    date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
-    type_label = str(leave.leave_type).replace("_", " ").title()
+    date_str = slack.date_range(leave.start_date, leave.end_date)
+    phrase = leave_phrase(leave.leave_type)
 
     slack.delete_msg(approval_step.slack_channel, approval_step.slack_ts)
     approval_step.slack_channel = None
@@ -590,24 +601,20 @@ def approve_leave(
     if is_fully_approved:
         if user.slack_user_id:
             slack.dm(user.slack_user_id,
-                text=f"Leave #{leave.id} approved!",
+                text=f"Your {phrase} request was approved.",
                 blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":tada: *Leave #{leave.id} fully approved!*\n_{type_label} · {date_str} · {days} working day(s)._"}}])
+                    "text": f":tada: Your *{phrase}* request for *{date_str}* was approved. Enjoy!"}}])
     else:
+        # Intermediate step approved — forward to the next approver.
+        # The applicant is intentionally not notified until a final decision.
         next_step = (
             db.query(LeaveApproval)
             .where(LeaveApproval.leave_id == leave_id, LeaveApproval.status == ApprovalStatus.pending)
             .order_by(LeaveApproval.step)
             .first()
         )
-        if user.slack_user_id:
-            next_name = next_step.approver.name if next_step else "your manager"
-            slack.dm(user.slack_user_id,
-                text=f"Leave #{leave.id} update",
-                blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                    "text": f":arrow_forward: *Leave #{leave.id}* — {current_user.name} approved. Now awaiting *{next_name}*."}}])
         if next_step and next_step.approver.slack_user_id:
-            msg = slack.dm(next_step.approver.slack_user_id, **slack.approver_payload(leave, user, "Step 2 of 2", days))
+            msg = slack.dm(next_step.approver.slack_user_id, **slack.approver_payload(leave, user, days))
             if msg:
                 next_step.slack_channel = msg["channel"]
                 next_step.slack_ts = msg["ts"]
@@ -643,12 +650,12 @@ def reject_leave(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your leave request to reject")
 
     approval_step.status = ApprovalStatus.rejected
-    approval_step.decided_at = datetime.utcnow()
+    approval_step.decided_at = now_ist()
     approval_step.rejection_note = body.reason
     leave.status = LeaveStatus.rejected
 
-    date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
-    type_label = str(leave.leave_type).replace("_", " ").title()
+    date_str = slack.date_range(leave.start_date, leave.end_date)
+    phrase = leave_phrase(leave.leave_type)
 
     slack.delete_msg(approval_step.slack_channel, approval_step.slack_ts)
     approval_step.slack_channel = None
@@ -657,11 +664,10 @@ def reject_leave(
     user = leave.user
     if user.slack_user_id:
         slack.dm(user.slack_user_id,
-            text=f"Leave #{leave.id} rejected.",
+            text=f"Your {phrase} request was rejected.",
             blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                "text": f":x: *Leave #{leave.id} was rejected* by {current_user.name}.\n"
-                        f"_{type_label} leave · {date_str}_\n"
-                        f"_Reason:_ {body.reason}"}}])
+                "text": f":x: Your *{phrase}* request for *{date_str}* was rejected by *{current_user.name}*.\n"
+                        f"*Reason:* {body.reason}"}}])
 
     db.commit()
     db.refresh(leave)
@@ -683,7 +689,7 @@ def update_leave(
     if leave.status != LeaveStatus.pending:
         raise HTTPException(status_code=400, detail="Only pending leaves can be edited")
 
-    today = date.today()
+    today = today_ist()
     new_start = body.start_date or leave.start_date
     new_end = body.end_date or leave.end_date
 
@@ -701,7 +707,7 @@ def update_leave(
             leave.leave_type,
             new_start,
             duration,
-            datetime.now(),
+            now_ist(),
             today,
             unconstrained=current_user.is_admin or current_user.manager is None,
             is_exception=leave.is_exception,
@@ -748,7 +754,7 @@ def delete_leave(
     if not leave:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Leave request not found")
 
-    if not current_user.is_admin and leave.start_date <= datetime.now().date():
+    if not current_user.is_admin and leave.start_date <= today_ist():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete a leave that has already started or passed")
 
     if leave.status == LeaveStatus.approved:
@@ -761,8 +767,8 @@ def delete_leave(
     slack_msgs = [(a.slack_channel, a.slack_ts) for a in pending_approvals if a.slack_channel]
     approver_slack_ids = [a.approver.slack_user_id for a in pending_approvals if a.approver.slack_user_id]
 
-    type_label = str(leave.leave_type).replace("_", " ").title()
-    date_str = str(leave.start_date) if leave.start_date == leave.end_date else f"{leave.start_date} → {leave.end_date}"
+    phrase = leave_phrase(leave.leave_type)
+    date_str = slack.date_range(leave.start_date, leave.end_date)
 
     db.delete(leave)
     db.commit()
@@ -771,18 +777,18 @@ def delete_leave(
         slack.delete_msg(ch, ts)
 
     withdrawal_note = (
-        f":x: *Leave request withdrawn* by {current_user.name}.\n"
-        f"_{type_label} · {date_str}_"
+        f":information_source: *{current_user.name}* has withdrawn their *{phrase}* "
+        f"request for *{date_str}*. No action needed."
     )
     for slack_id in approver_slack_ids:
-        slack.dm(slack_id, text=withdrawal_note, blocks=[
+        slack.dm(slack_id, text=f"{current_user.name} withdrew a leave request.", blocks=[
             {"type": "section", "text": {"type": "mrkdwn", "text": withdrawal_note}}
         ])
 
     if current_user.slack_user_id:
         slack.dm(current_user.slack_user_id,
-            text="Leave request withdrawn.",
+            text="Your leave request was withdrawn.",
             blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                "text": f":white_check_mark: Your *{type_label}* leave request ({date_str}) has been successfully withdrawn."
+                "text": f":white_check_mark: Your *{phrase}* request for *{date_str}* has been withdrawn."
             }}]
         )

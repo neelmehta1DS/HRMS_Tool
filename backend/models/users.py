@@ -4,7 +4,8 @@ from enum import StrEnum
 from typing import Optional
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Date, Time, DateTime, Enum, ForeignKey, func
+from sqlalchemy import Date, Time, DateTime, Enum, ForeignKey
+from core.time import now_ist
 from db.database import Base
 
 
@@ -59,4 +60,4 @@ class User(Base):
     birthday: Mapped[Optional[date]] = mapped_column(Date, default=None)
     joining_date: Mapped[Optional[date]] = mapped_column(Date, default=None)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist)

@@ -35,9 +35,6 @@ class UserResponse(BaseModel):
     stepping_out_from: Optional[time] = None
     stepping_out_to: Optional[time] = None
 
-    sick_leaves_taken: int = 0
-    casual_leaves_taken: int = 0
-
     is_admin: bool = False
 
     birthday: Optional[date] = None

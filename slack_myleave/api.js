@@ -15,27 +15,11 @@ const client = axios.create({
 
 /**
  * Returns { id, name, role, role_level, slack_user_id,
- *           sick_taken, casual_taken, wfh_taken,
  *           l1_manager: { id, name, role, slack_user_id } | null,
  *           l2_manager: { id, name, role, slack_user_id } | null }
  */
 async function getUser(slackUserId) {
   const res = await client.get(`/bot/user/${encodeURIComponent(slackUserId)}`);
-  return res.data;
-}
-
-/**
- * Returns a LeaveResponse (same shape as the web app).
- * Throws AxiosError on 4xx/5xx.
- */
-async function createLeave({ slackUserId, leave_type, start_date, end_date, note }) {
-  const res = await client.post('/bot/leaves', {
-    slack_user_id: slackUserId,
-    leave_type,
-    start_date,
-    end_date,
-    note: note || null,
-  });
   return res.data;
 }
 
@@ -62,9 +46,4 @@ async function setApprovalMessage(approvalId, channel, ts) {
   return res.data;
 }
 
-async function getTeamAvailability() {
-  const res = await client.get('/bot/team-availability');
-  return res.data;
-}
-
-module.exports = { getUser, createLeave, getLeave, approveLeave, rejectLeave, setApprovalMessage, getTeamAvailability };
+module.exports = { getUser, getLeave, approveLeave, rejectLeave, setApprovalMessage };

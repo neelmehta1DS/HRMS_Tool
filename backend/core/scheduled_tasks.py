@@ -1,7 +1,6 @@
-from datetime import date
-
+from core.time import today_ist
 from db.database import SessionLocal
-from models.leaves import Leave, LeaveBalance, LeaveStatus
+from models.leaves import Leave, LeaveBalance, LeaveStatus, leave_type_label
 from models.users import User
 from core.config import settings
 from core import slack
@@ -13,7 +12,7 @@ def reset_annual_leave_counts() -> None:
     # This function optionally prunes balance rows that are more than 3 years old.
     db = SessionLocal()
     try:
-        cutoff_year = date.today().year - 3
+        cutoff_year = today_ist().year - 3
         db.query(LeaveBalance).filter(LeaveBalance.year < cutoff_year).delete()
         db.commit()
     finally:
@@ -41,7 +40,7 @@ def send_morning_digest() -> None:
 
     db = SessionLocal()
     try:
-        today = date.today()
+        today = today_ist()
 
         on_leave = (
             db.query(Leave)
@@ -55,22 +54,23 @@ def send_morning_digest() -> None:
 
         late_users = db.query(User).filter(User.late_arrive_eta != None).all()
 
-        lines = [f"*Good morning! Here's today's team status — {today.strftime('%A, %-d %b')}*"]
+        lines = [f"*Good morning! Here's today's team status — {today.strftime('%A, %-d %b %Y')}*"]
 
+        lines.append("\n*On Leave Today*")
         if on_leave:
-            lines.append("\n*On Leave Today*")
             for leave in on_leave:
-                type_label = str(leave.leave_type).capitalize()
+                type_label = leave_type_label(leave.leave_type)
                 end_str = f", back {leave.end_date.strftime('%-d %b')}" if leave.end_date != today else ""
                 lines.append(f"• {leave.user.name} ({type_label}{end_str})")
+        else:
+            lines.append("• No one is on leave today.")
 
+        lines.append("\n*Running Late*")
         if late_users:
-            lines.append("\n*Running Late*")
             for u in late_users:
                 lines.append(f"• {u.name} · ETA {u.late_arrive_eta.strftime('%H:%M')}")
-
-        if not on_leave and not late_users:
-            lines.append("\nEveryone's in today! ✅")
+        else:
+            lines.append("• No one is running late today.")
 
         text = "\n".join(lines)
         slack.post_channel(

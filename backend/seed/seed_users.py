@@ -73,7 +73,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U094ARA7RFA",
         "office_status": None,
-        "birthday": date(1995, 7, 4),
+        "birthday": date(2004, 7, 26),
         "joining_date": date(2025, 7, 1),
     })
 
@@ -85,7 +85,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U09JW1R9GJW",
         "office_status": None,
-        "birthday": date(1996, 1, 28),
+        "birthday": date(2003, 8, 6),
         "joining_date": date(2025, 10, 8),
     })
 
@@ -109,7 +109,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0AGTCNJ8AD",
         "office_status": None,
-        "birthday": date(1993, 8, 30),
+        "birthday": date(1998, 10, 2),
         "joining_date": date(2025, 2, 23),
     })
 
@@ -121,7 +121,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0228BG7AGL",
         "office_status": None,
-        "birthday": date(1997, 2, 14),
+        "birthday": date(1999, 9, 28),
         "joining_date": date(2026, 4, 24),
     })
 
@@ -133,7 +133,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U035S8Z1Z1N",
         "office_status": None,
-        "birthday": date(1991, 10, 5),
+        "birthday": date(1999, 11, 11),
         "joining_date": date(2022, 3, 11),
     })
 
@@ -145,7 +145,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0A6D61AT1C",
         "office_status": None,
-        "birthday": date(1992, 12, 9),
+        "birthday": date(1999, 7, 23),
         "joining_date": date(2026, 1, 2),
     })
 
@@ -157,7 +157,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U035TALQ57X",
         "office_status": None,
-        "birthday": date(1990, 6, 25),
+        "birthday": date(1999, 8, 13),
         "joining_date": date(2022, 3, 7),
     })
 
@@ -172,7 +172,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U09CNE6FZFA",
         "office_status": None,
-        "birthday": date(1999, 4, 12),
+        "birthday": date(2001, 7, 11),
         "joining_date": date(2025, 8, 25),
     })
 
@@ -184,7 +184,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0ATS4VCXMH",
         "office_status": None,
-        "birthday": date(1998, 9, 3),
+        "birthday": date(2000, 2, 16),
         "joining_date": date(2026, 4, 20),
     })
 
@@ -196,7 +196,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0AQYLZS42J",
         "office_status": None,
-        "birthday": date(1997, 11, 21),
+        "birthday": date(1998, 1, 26),
         "joining_date": date(2026, 4, 6),
     })
 
@@ -235,7 +235,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U0A0TRC1XUL",
         "office_status": None,
-        "birthday": date(1996, 3, 8),
+        "birthday": date(1998, 12, 8),
         "joining_date": date(2025, 12, 2),
     })
 
@@ -247,7 +247,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U04JP86DPMW",
         "office_status": None,
-        "birthday": date(1995, 6, 16),
+        "birthday": date(2002, 7, 13),
         "joining_date": date(2023, 7, 1),
     })
 
@@ -259,7 +259,7 @@ def seed_users(db: Session):
         "refresh_token": "dummy string",
         "slack_user_id": "U07S9U441FU",
         "office_status": None,
-        "birthday": date(2000, 7, 17),
+        "birthday": date(1999, 11, 2),
         "joining_date": date(2024, 10, 21),
     })
 

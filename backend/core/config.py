@@ -3,12 +3,13 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
 class Settings(BaseSettings):
-    DATABASE_URL: str 
+    DATABASE_URL: str
 
-    API_PREFIX: str = "/api"
     DEBUG: bool = False
 
     APP_BASE_URL: str = "http://localhost:8000"
+    # Where users land after a successful Google login.
+    FRONTEND_URL: str = "http://localhost:5173"
 
     ALLOWED_ORIGINS: str = ""
 

@@ -1,18 +1,13 @@
 display_information:
   name: LeaveBot
-  description: Apply for leave, check balance, view holidays — with L1/L2 approvals.
+  description: Leave notifications with L1/L2 approve/reject actions.
 features:
   bot_user:
     display_name: LeaveBot
     always_online: true
-  slash_commands:
-    - command: /myleave
-      description: Apply for leave, check balance, view holidays
-      should_escape: false
 oauth_config:
   scopes:
     bot:
-      - commands
       - chat:write
       - im:write
       - users:read

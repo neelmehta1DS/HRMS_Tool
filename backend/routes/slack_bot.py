@@ -1,23 +1,20 @@
 from typing import Annotated
-from datetime import date, datetime, timedelta
+from core.time import now_ist
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from schemas.slack_bot import (
     BotUserResponse, BotManagerInfo,
-    BotLeaveCreate, BotApproveRequest, BotRejectRequest, BotSetMessageRequest,
+    BotApproveRequest, BotRejectRequest, BotSetMessageRequest,
 )
 from schemas.leaves import LeaveResponse
-from models.leaves import Leave, LeaveApproval, LeaveType, LeaveStatus, ApprovalStatus
+from models.leaves import Leave, LeaveApproval, LeaveStatus, ApprovalStatus
 from models.users import User
 from core.config import settings
+from core.loaders import LEAVE_LOADS
 from db.database import get_db
-from routes.leaves import (
-    count_weekdays, add_working_days, ensure_working_days,
-    get_or_create_balance, enforce_leave_limit,
-)
-from core.leave_policy import evaluate as evaluate_policy
+from routes.leaves import count_weekdays, get_or_create_balance
 
 router = APIRouter(prefix="/bot", tags=["slack-bot"])
 
@@ -59,84 +56,13 @@ def get_user_by_slack_id(
     return _bot_user_response(user)
 
 
-@router.post("/leaves", response_model=LeaveResponse)
-def create_leave_for_user(
-    body: BotLeaveCreate,
-    db: Annotated[Session, Depends(get_db)],
-    _=Depends(verify_bot_key),
-):
-    user = db.query(User).filter(User.slack_user_id == body.slack_user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="No user with that Slack ID")
-
-    try:
-        start = date.fromisoformat(body.start_date)
-        end = date.fromisoformat(body.end_date)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid date format, expected YYYY-MM-DD")
-
-    if end < start:
-        raise HTTPException(status_code=422, detail="end_date cannot be before start_date")
-
-    days = ensure_working_days(start, end)
-
-    today = date.today()
-    now = datetime.now()
-
-    unconstrained = user.is_admin or user.manager is None
-
-    decision = evaluate_policy(
-        body.leave_type,
-        start,
-        days,
-        now,
-        today,
-        unconstrained=unconstrained,
-        is_exception=False,  # the bot has no exception path
-    )
-    if decision.error:
-        raise HTTPException(status_code=422, detail=decision.error)
-    auto_approve = decision.auto_approve or unconstrained
-
-    if not user.is_admin:
-        enforce_leave_limit(db, user.id, body.leave_type, days, start.year)
-
-    manager = user.manager
-    skip = manager.manager if manager else None
-
-    leave = Leave(
-        user_id=user.id,
-        leave_type=body.leave_type,
-        note=body.note,
-        start_date=start,
-        end_date=end,
-        status=LeaveStatus.approved if auto_approve else LeaveStatus.pending,
-    )
-    db.add(leave)
-    db.flush()
-
-    if not auto_approve:
-        db.add(LeaveApproval(leave_id=leave.id, approver_id=manager.id, step=1))
-        if skip:
-            db.add(LeaveApproval(leave_id=leave.id, approver_id=skip.id, step=2))
-
-    if auto_approve:
-        year = start.year
-        bal = get_or_create_balance(db, user.id, body.leave_type, year)
-        bal.days_taken += days
-
-    db.commit()
-    db.refresh(leave)
-    return leave
-
-
 @router.get("/leaves/{leave_id}", response_model=LeaveResponse)
 def get_leave(
     leave_id: int,
     db: Annotated[Session, Depends(get_db)],
     _=Depends(verify_bot_key),
 ):
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
+    leave = db.query(Leave).options(*LEAVE_LOADS).filter(Leave.id == leave_id).first()
     if not leave:
         raise HTTPException(status_code=404, detail="Leave not found")
     return leave
@@ -170,7 +96,7 @@ def approve_leave(
         raise HTTPException(status_code=403, detail="Not your leave to approve")
 
     approval_step.status = ApprovalStatus.approved
-    approval_step.decided_at = datetime.utcnow()
+    approval_step.decided_at = now_ist()
     db.flush()
 
     remaining = (
@@ -218,49 +144,13 @@ def reject_leave(
         raise HTTPException(status_code=403, detail="Not your leave to reject")
 
     approval_step.status = ApprovalStatus.rejected
-    approval_step.decided_at = datetime.utcnow()
+    approval_step.decided_at = now_ist()
     approval_step.rejection_note = body.reason or ""
     leave.status = LeaveStatus.rejected
 
     db.commit()
     db.refresh(leave)
     return leave
-
-
-@router.get("/team-availability")
-def get_team_availability(
-    db: Annotated[Session, Depends(get_db)],
-    _=Depends(verify_bot_key),
-):
-    today = date.today()
-
-    on_leave_records = db.query(Leave).filter(
-        Leave.start_date <= today,
-        Leave.end_date >= today,
-        Leave.status == LeaveStatus.approved,
-    ).all()
-
-    on_leave_user_ids = {l.user_id for l in on_leave_records}
-
-    on_leave = [
-        {
-            "name": l.user.name,
-            "leave_type": str(l.leave_type).replace("_", " ").title(),
-            "end_date": str(l.end_date),
-        }
-        for l in on_leave_records
-    ]
-
-    all_users = db.query(User).order_by(User.name).all()
-    available = [
-        {
-            "name": u.name,
-            "status": "WFH" if u.office_status == "WFH" else ("In Office" if u.office_status == "IN" else "Out of Office"),
-        }
-        for u in all_users if u.id not in on_leave_user_ids
-    ]
-
-    return {"on_leave": on_leave, "available": available}
 
 
 @router.patch("/leave-approvals/{approval_id}/message")

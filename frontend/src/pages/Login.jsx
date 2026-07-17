@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { LayoutDashboard, CalendarDays, Users } from "lucide-react";
-import { getMe } from "../lib/api";
+import { getMe, API_URL } from "../lib/api";
 
 function GoogleIcon() {
   return (
@@ -87,7 +87,7 @@ export default function Login() {
           <p className="text-[13.5px] text-slate-400 mb-8">Sign in to access your workspace.</p>
 
           <a
-            href="http://localhost:8000/auth/login"
+            href={`${API_URL}/auth/login`}
             className="flex items-center justify-center gap-3 w-full px-5 py-3.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-[13.5px] font-semibold hover:border-slate-300 hover:shadow-sm transition-all shadow-sm"
           >
             <GoogleIcon />

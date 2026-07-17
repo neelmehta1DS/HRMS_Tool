@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 _CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 
+# Catch-up times are stored naive as IST wall-clock (see core/time.py), so the
+# calendar event must be tagged with the matching IANA zone — not UTC, or every
+# invite lands 5.5 hours off.
+_EVENT_TIMEZONE = "Asia/Kolkata"
+
 
 def _build_credentials(refresh_token: str) -> Credentials:
     return Credentials(
@@ -40,8 +45,8 @@ def _create_calendar_event(
 
     event = {
         "summary": f"Catchup: {employee_name}",
-        "start": {"dateTime": date_and_time.isoformat(), "timeZone": "UTC"},
-        "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
+        "start": {"dateTime": date_and_time.isoformat(), "timeZone": _EVENT_TIMEZONE},
+        "end": {"dateTime": end_time.isoformat(), "timeZone": _EVENT_TIMEZONE},
         "attendees": attendees,
         "conferenceData": {
             "createRequest": {
@@ -81,8 +86,8 @@ def _patch_calendar_event_time(manager_refresh_token: str, event_id: str, new_da
         calendarId="primary",
         eventId=event_id,
         body={
-            "start": {"dateTime": new_date_and_time.isoformat(), "timeZone": "UTC"},
-            "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
+            "start": {"dateTime": new_date_and_time.isoformat(), "timeZone": _EVENT_TIMEZONE},
+            "end": {"dateTime": end_time.isoformat(), "timeZone": _EVENT_TIMEZONE},
         },
         sendUpdates="all",
     ).execute()

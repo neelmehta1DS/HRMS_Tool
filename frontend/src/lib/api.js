@@ -1,7 +1,11 @@
 import axios from "axios";
 
+// Backend base URL. Set VITE_API_URL at build time in production; falls back to
+// the local dev server when unset.
+export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 const api = axios.create({
-  baseURL: "http://localhost:8000",
+  baseURL: API_URL,
   withCredentials: true,
 });
 
@@ -34,6 +38,8 @@ export const getLeaveBalances = () => api.get("/leaves/me/balances").then(r => r
 export const getUserBalances = (id) => api.get(`/leaves/${id}/balances`).then(r => r.data);
 export const getUserLeaveSummary = (id, days = 28) =>
   api.get(`/leaves/${id}/summary`, { params: { days } }).then(r => r.data);
+export const getMyHygiene = () => api.get("/leaves/me/hygiene").then(r => r.data);
+export const getUserHygiene = (id) => api.get(`/leaves/${id}/hygiene`).then(r => r.data);
 export const getHolidays = () => api.get("/leaves/holidays").then(r => r.data);
 export const getLeaveLimits = () => api.get("/leaves/limits").then(r => r.data);
 export const getLeaveRules = () => api.get("/leaves/rules").then(r => r.data);

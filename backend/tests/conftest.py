@@ -8,9 +8,10 @@ from fastapi import Depends
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-from db.database import Base, get_db
+from db.database import Base, get_db, SessionLocal as AppSessionLocal
 from models.users import User
 from models.status_events import StatusEvent  # noqa: F401 — registers the table with Base.metadata
+from models.app_config import AppConfig  # noqa: F401 — registers the table with Base.metadata
 from core.security import get_current_user
 
 # ---------------------------------------------------------------------------
@@ -26,6 +27,12 @@ test_engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+# Some route helpers (e.g. the concurrent dashboard fan-out) open their own
+# sessions via the app's SessionLocal instead of the injected get_db session.
+# Rebind that global sessionmaker to the test engine so those sessions read the
+# same in-memory database (shared through StaticPool) as the rest of the suite.
+AppSessionLocal.configure(bind=test_engine)
 
 
 @pytest.fixture(autouse=True)

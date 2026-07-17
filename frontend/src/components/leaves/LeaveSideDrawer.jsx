@@ -2,6 +2,7 @@ import { AlertTriangle, Check, Info, Pencil, Trash2, X } from "lucide-react";
 import Avatar from "../ui/Avatar";
 import { LEAVE_TYPE_META, countBusinessDays } from "../../lib/utils";
 import { StatusBadge, derivedStatus, fmtDateRange, fmtDecidedAt } from "./leaveDisplay";
+import { HygieneDetailBlock } from "./LeaveHygiene";
 
 function ApprovalSteps({ leave }) {
   const approvals = leave?.approvals;
@@ -111,7 +112,7 @@ function EmployeeBalanceBlock({ balances, name }) {
  *  - admin: read-and-edit; the page owns the buttons, so this shows none
  */
 export default function LeaveSideDrawer({
-  leave, context, holidays, onClose, onDelete, onEdit, onApprove, onRejectOpen, balances,
+  leave, context, holidays, onClose, onDelete, onEdit, onApprove, onRejectOpen, balances, hygiene,
 }) {
   if (!leave) return null;
   const days = countBusinessDays(leave.start_date, leave.end_date, holidays || []);
@@ -122,8 +123,10 @@ export default function LeaveSideDrawer({
   const isManager = context === "manager";
 
   // A leave from the manager view carries the employee's balances; the own view
-  // and the admin page pass them in directly.
+  // and the admin page pass them in directly. Hygiene follows the same rule and
+  // is null for L2 leads, so the block renders nothing for them.
   const balanceSource = isOwn ? balances : (leave.user_balances ?? balances);
+  const hygieneSource = isOwn ? hygiene : (leave.user_hygiene ?? hygiene);
   const showManagerActions = isManager && (status === "pending" || status === "pending_l2");
   const showWithdraw = isOwn && (status === "pending" || status === "pending_l2" || status === "scheduled");
   // Editable whenever the leaves route accepts it — same rule the table's pencil uses.
@@ -186,6 +189,8 @@ export default function LeaveSideDrawer({
           </div>
 
           <EmployeeBalanceBlock balances={balanceSource} name={isOwn ? null : leave.user?.name} />
+
+          <HygieneDetailBlock hygiene={hygieneSource} />
 
           {leave.note && (
             <div>

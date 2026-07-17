@@ -105,7 +105,7 @@ def oauth2callback(
     db.refresh(user)
 
     token = create_jwt(user.id)
-    response = RedirectResponse("http://localhost:5173")
+    response = RedirectResponse(settings.FRONTEND_URL)
     response.set_cookie(
         key="jwt_token",
         value=token,

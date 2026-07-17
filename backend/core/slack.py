@@ -3,6 +3,7 @@ from typing import Optional
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from core.config import settings
+from models.leaves import leave_phrase
 
 _client: Optional[WebClient] = None
 
@@ -20,6 +21,24 @@ def _dest(slack_user_id: str) -> str:
     if settings.SLACK_DEMO_MODE and settings.SLACK_DEMO_USER_ID:
         return settings.SLACK_DEMO_USER_ID
     return slack_user_id
+
+
+def fmt_date(d) -> str:
+    """Format a date the friendly way, e.g. '20 Jul 2026'."""
+    return d.strftime("%-d %b %Y")
+
+
+def date_range(start, end) -> str:
+    """Human-friendly date range with no raw ISO dates.
+
+    Single day → '20 Jul 2026'. Same-year range → '20 Jul → 22 Jul 2026'.
+    Cross-year range → '28 Dec 2025 → 3 Jan 2026'.
+    """
+    if start == end:
+        return fmt_date(start)
+    if start.year == end.year:
+        return f"{start.strftime('%-d %b')} → {fmt_date(end)}"
+    return f"{fmt_date(start)} → {fmt_date(end)}"
 
 
 def dm(slack_user_id: str, **kwargs) -> Optional[dict]:
@@ -62,28 +81,25 @@ def delete_msg(channel: Optional[str], ts: Optional[str]) -> None:
         print(f"[slack delete error] {e.response['error']}")
 
 
-def approver_payload(leave, user, step_label: str, days: int, over_limit: bool = False) -> dict:
+def approver_payload(leave, user, days: int, over_limit: bool = False) -> dict:
     """Build the chat_postMessage kwargs for a manager approval request DM."""
-    date_str = (
-        str(leave.start_date)
-        if leave.start_date == leave.end_date
-        else f"{leave.start_date} → {leave.end_date}"
-    )
-    type_label = str(leave.leave_type).capitalize()
+    date_str = date_range(leave.start_date, leave.end_date)
+    phrase = leave_phrase(leave.leave_type)
     day_word = "day" if days == 1 else "days"
-    over_limit_line = f"\n⚠️ *This will exceed {user.name}'s {type_label.lower()} leave balance.*" if over_limit else ""
-    exception_line = f"\n🚨 *EXCEPTION REQUEST — notice rules waived by employee.*" if getattr(leave, "is_exception", False) else ""
+    first_name = user.name.split()[0] if user.name else user.name
+    over_limit_line = f"\n⚠️ This request will exceed {first_name}'s {phrase.lower()} balance." if over_limit else ""
+    exception_line = "\n🚨 Exception request — notice-period rules were waived." if getattr(leave, "is_exception", False) else ""
     text = (
-        f"*Leave request* `#{leave.id}`  ·  _{step_label}_\n"
-        f"*From:* {user.name} ({user.role})\n"
-        f"*Type:* {type_label}\n"
-        f"*Dates:* {date_str}  (*{days}* working {day_word})\n"
-        f"*Note:* {leave.note or '—'}"
+        f"*Leave approval needed*\n"
+        f"*{user.name}* ({user.role}) has requested time off and needs your approval.\n\n"
+        f"*Type:*  {phrase}\n"
+        f"*Dates:*  {date_str}  ({days} working {day_word})\n"
+        f"*Note:*  {leave.note or '—'}"
         f"{over_limit_line}"
         f"{exception_line}"
     )
     return {
-        "text": f"Leave request #{leave.id} from {user.name}",
+        "text": f"Leave approval needed for {user.name}",
         "blocks": [
             {"type": "section", "text": {"type": "mrkdwn", "text": text}},
             {

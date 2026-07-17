@@ -31,9 +31,8 @@ def _mock_before_cutoff():
 @contextmanager
 def _before_cutoff_on_a_working_day():
     """Freeze the route at 9:00 AM on WORKING_TODAY."""
-    with patch("routes.leaves.datetime") as mock_dt, patch("routes.leaves.date") as mock_date:
-        mock_dt.now.return_value = _mock_before_cutoff()
-        mock_date.today.return_value = WORKING_TODAY
+    with patch("routes.leaves.now_ist", return_value=_mock_before_cutoff()), \
+         patch("routes.leaves.today_ist", return_value=WORKING_TODAY):
         yield
 
 
@@ -86,9 +85,8 @@ def test_sick_must_start_today(client_as, ic):
 
 def test_sick_after_cutoff_needs_approval(client_as, ic):
     """The cutoff gates auto-approval only; the request itself stays valid."""
-    with patch("routes.leaves.datetime") as mock_dt, patch("routes.leaves.date") as mock_date:
-        mock_dt.now.return_value = MagicMock(hour=11, minute=30)
-        mock_date.today.return_value = WORKING_TODAY
+    with patch("routes.leaves.now_ist", return_value=MagicMock(hour=11, minute=30)), \
+         patch("routes.leaves.today_ist", return_value=WORKING_TODAY):
         resp = client_as(ic).post("/leaves", json={
             "leave_type": "sick",
             "note": "Woke up ill, late",
@@ -163,7 +161,12 @@ def test_sick_and_casual_draw_from_one_shared_pool(client_as, ic, db):
     The pool is 12 days. Bank 11 sick days, then a 2-day casual request must be
     refused — even though not one casual day has ever been taken.
     """
-    start = _future_date(10)
+    # Far enough out to clear the notice ladder on any weekday: a 2-working-day
+    # casual request needs 7 *working* days notice, which +10 calendar days only
+    # just covers when today is early in the week. The limit is what's under
+    # test, so give the notice rule room rather than let the calendar decide
+    # which error comes back.
+    start = _future_date(30)
     db.add(LeaveBalance(
         user_id=ic.id, leave_type=LeaveType.sick_and_casual,
         year=start.year, days_taken=11,

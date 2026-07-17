@@ -1,15 +1,16 @@
 import json
 from pathlib import Path
 
+# leave_policy.json is the *bootstrap default*, loaded once at import so tests and
+# a fresh boot always have values. At runtime the database is the source of truth:
+# core/config_store.py seeds the DB from these defaults and then keeps LEAVE_LIMITS
+# / LEAVE_RULES in sync. Both are mutated in place so existing imports keep seeing
+# the current values.
 _JSON_PATH = Path(__file__).parent.parent.parent / "leave_policy.json"
 LEAVE_POLICY: dict = json.loads(_JSON_PATH.read_text())
 
 LEAVE_LIMITS: dict = LEAVE_POLICY["limits"]
 LEAVE_RULES: dict = LEAVE_POLICY["rules"]
-
-
-def persist_leave_limits() -> None:
-    _JSON_PATH.write_text(json.dumps(LEAVE_POLICY, indent=2))
 
 
 def get_notice_days(duration: int, rules: list) -> int:

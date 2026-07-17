@@ -140,27 +140,3 @@ def test_editing_a_leave_onto_a_weekend_is_rejected(client_as, ic, db):
     db.expire_all()
     unchanged = db.query(Leave).filter_by(id=created["id"]).first()
     assert str(unchanged.start_date) == created["start_date"]
-
-
-# ─── POST /bot/leaves ─────────────────────────────────────────────────────────
-
-def test_bot_leave_on_a_weekend_is_rejected(client_as, ic, manager, db, monkeypatch):
-    from core.config import settings
-    monkeypatch.setattr(settings, "INTERNAL_API_KEY", "test-key")
-
-    ic.slack_user_id = "U123"
-    db.commit()
-    sat = _next_saturday()
-
-    resp = client_as(ic).post(
-        "/bot/leaves",
-        headers={"x-internal-key": "test-key"},
-        json={
-            "slack_user_id": "U123", "leave_type": "earned", "note": "Weekend",
-            "start_date": str(sat), "end_date": str(sat),
-        },
-    )
-
-    assert resp.status_code == 422
-    assert "working day" in resp.json()["detail"].lower()
-    assert db.query(Leave).count() == 0

@@ -1,10 +1,11 @@
 from typing import Annotated
-from datetime import datetime
+from core.time import now_ist
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from core.security import get_current_user
+from core.loaders import user_rel_chain
 from db.database import get_db
 from services.catchup_resources import create_catchup_resources, delete_catchup_resources, recreate_catchup_resources, update_catchup_calendar_time
 
@@ -27,34 +28,36 @@ def _find_l2(employee: User, db: Session) -> User | None:
 
 @router.get("/me", response_model=dict[str, list[CatchupResponse]])
 def get_my_catchups(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    now = datetime.now()
+    now = now_ist()
 
-    upcoming = db.query(Catchup).where(
+    catchups = db.query(Catchup).options(
+        user_rel_chain(Catchup.employee),
+        user_rel_chain(Catchup.manager),
+        user_rel_chain(Catchup.alternate_manager),
+    ).where(
         Catchup.employee_id == current_user.id,
-        Catchup.date_and_time >= now,
     ).all()
 
-    previous = db.query(Catchup).where(
-        Catchup.employee_id == current_user.id,
-        Catchup.date_and_time < now,
-    ).all()
+    upcoming = [c for c in catchups if c.date_and_time >= now]
+    previous = [c for c in catchups if c.date_and_time < now]
 
     return {"upcoming": upcoming, "previous": previous}
 
 
 @router.get("/manager/me", response_model=dict[str, list[CatchupResponse]])
 def get_my_catchups_as_manager(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
-    now = datetime.now()
+    now = now_ist()
 
-    upcoming = db.query(Catchup).where(
+    catchups = db.query(Catchup).options(
+        user_rel_chain(Catchup.employee),
+        user_rel_chain(Catchup.manager),
+        user_rel_chain(Catchup.alternate_manager),
+    ).where(
         (Catchup.manager_id == current_user.id) | (Catchup.alternate_manager_id == current_user.id),
-        Catchup.date_and_time >= now,
     ).all()
 
-    previous = db.query(Catchup).where(
-        (Catchup.manager_id == current_user.id) | (Catchup.alternate_manager_id == current_user.id),
-        Catchup.date_and_time < now,
-    ).all()
+    upcoming = [c for c in catchups if c.date_and_time >= now]
+    previous = [c for c in catchups if c.date_and_time < now]
 
     return {"upcoming": upcoming, "previous": previous}
 

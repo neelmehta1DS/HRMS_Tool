@@ -5,7 +5,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from models.leaves import LeaveType, LeaveStatus, ApprovalStatus, REQUESTABLE_LEAVE_TYPES
-from schemas.users import UserResponse
 
 
 def reject_balance_bucket(value: LeaveType) -> LeaveType:
@@ -20,6 +19,19 @@ def reject_balance_bucket(value: LeaveType) -> LeaveType:
             f"Use 'sick' or 'casual'."
         )
     return value
+
+
+class LeaveUser(BaseModel):
+    """The slice of a user carried on a leave — deliberately not the full
+    UserResponse. A leave list repeats its user on every row, so this stays tiny
+    to keep the payload small and avoid walking the manager chain N times. These
+    four fields are everything the frontend and the Slack bot read off a leave's
+    user (id/name for the UI; name/role/slack_user_id for the bot's DMs)."""
+    id: int
+    name: str
+    role: str
+    slack_user_id: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApproverInfo(BaseModel):
@@ -73,15 +85,30 @@ class LeaveBalanceEntry(BaseModel):
     remaining: Optional[int]  # None when limit is null (LWP)
 
 
+class LeaveHygieneResponse(BaseModel):
+    """A user's leave-hygiene score — see core/leave_hygiene.py.
+
+    Only present for users with a manager; L2 leads have no score and get null.
+    """
+    score: int
+    band: str
+    exceptions: int
+    hop_absences: int
+    total_leaves: int
+    driver: str
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LeaveResponse(LeaveBase):
     id: int
-    user: UserResponse
+    user: LeaveUser
 
     is_exception: bool = False
     status: LeaveStatus
     approvals: list[LeaveApprovalResponse] = []
     over_limit: bool = False
     user_balances: Optional[dict[str, LeaveBalanceEntry]] = None
+    user_hygiene: Optional[LeaveHygieneResponse] = None
 
     created_at: datetime
 

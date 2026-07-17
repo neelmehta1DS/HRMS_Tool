@@ -1,156 +1,82 @@
 // views.js
-// Block Kit builders — accept user objects from the backend API, not PEOPLE names.
+// Block Kit builders for the approval flow — accept user objects from the backend API.
 
-const dayjs = require('dayjs');
-const { today } = require('./leaveRules');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const TOTALS = require('../leave_policy.json').limits;
-
-// ---------- Modal: main menu ----------
-function menuView(user, balance) {
-  return {
-    type: 'modal',
-    callback_id: 'leave_menu',
-    title: { type: 'plain_text', text: 'Leave Management' },
-    close: { type: 'plain_text', text: 'Close' },
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `*Hi ${user.name}*  ·  ${user.role}\n` +
-                `:beach_with_umbrella: Sick *${balance.sick}* left  ·  ` +
-                `:palm_tree: Casual *${balance.casual}* left`,
-        },
-      },
-      { type: 'divider' },
-      {
-        type: 'actions',
-        elements: [
-          { type: 'button', action_id: 'leave_apply', style: 'primary',
-            text: { type: 'plain_text', text: 'Apply for Leave' } },
-          { type: 'button', action_id: 'leave_balance',
-            text: { type: 'plain_text', text: 'My Balance' } },
-          { type: 'button', action_id: 'leave_holidays',
-            text: { type: 'plain_text', text: 'Holiday Calendar' } },
-          { type: 'button', action_id: 'leave_availability',
-            text: { type: 'plain_text', text: 'Team Availability' } },
-        ],
-      },
-    ],
-  };
+// Format an ISO date string (YYYY-MM-DD) the friendly way, e.g. '20 Jul 2026'.
+// Parsed by hand to avoid Date() timezone shifts.
+function fmtDate(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
 }
 
-// ---------- Modal: apply form (pushed) ----------
-function applyView(user) {
-  const t = today();
-  return {
-    type: 'modal',
-    callback_id: 'leave_apply_submit',
-    private_metadata: JSON.stringify({ slackId: user.slack_user_id }),
-    title: { type: 'plain_text', text: 'Apply for Leave' },
-    submit: { type: 'plain_text', text: 'Submit' },
-    close: { type: 'plain_text', text: 'Back' },
-    blocks: [
-      {
-        type: 'input', block_id: 'type',
-        label: { type: 'plain_text', text: 'Leave type' },
-        element: {
-          type: 'radio_buttons', action_id: 'val',
-          options: [
-            { text: { type: 'plain_text', text: 'Sick' }, value: 'sick' },
-            { text: { type: 'plain_text', text: 'Casual (advance notice required)' }, value: 'casual' },
-          ],
-        },
-      },
-      {
-        type: 'input', block_id: 'start',
-        label: { type: 'plain_text', text: 'Start date' },
-        element: { type: 'datepicker', action_id: 'val', initial_date: t },
-      },
-      {
-        type: 'input', block_id: 'end', optional: true,
-        label: { type: 'plain_text', text: 'End date (leave blank for a single day)' },
-        element: { type: 'datepicker', action_id: 'val' },
-      },
-      {
-        type: 'input', block_id: 'note',
-        label: { type: 'plain_text', text: 'Note' },
-        element: { type: 'plain_text_input', action_id: 'val', multiline: true,
-          placeholder: { type: 'plain_text', text: 'Keep it short' } },
-      },
-      {
-        type: 'context',
-        elements: [{
-          type: 'mrkdwn',
-          text: ':information_source: Sick = today only. Casual single-day needs 1 day notice; ' +
-                'multi-day needs 5 days notice. Weekends & holidays are not counted.',
-        }],
-      },
-    ],
-  };
+// Human-friendly date range with no raw ISO dates.
+// Single day → '20 Jul 2026'. Same-year → '20 Jul → 22 Jul 2026'.
+// Cross-year → '28 Dec 2025 → 3 Jan 2026'.
+function dateRange(start, end) {
+  if (start === end) return fmtDate(start);
+  const [sy, sm, sd] = String(start).split('-').map(Number);
+  if (sy === Number(String(end).split('-')[0])) {
+    return `${sd} ${MONTHS[sm - 1]} → ${fmtDate(end)}`;
+  }
+  return `${fmtDate(start)} → ${fmtDate(end)}`;
 }
 
-// ---------- Modal: balance (pushed, read-only) ----------
-function balanceView(user, balance) {
-  const lines = [
-    `*${user.name}* · ${user.role}`,
-    '',
-    `:beach_with_umbrella: *Sick leave:*  ${balance.sick_taken} used of ${TOTALS.sick}  ·  *${balance.sick} remaining*`,
-    `:palm_tree: *Casual leave:*  ${balance.casual_taken} used of ${TOTALS.casual}  ·  *${balance.casual} remaining*`,
-  ];
-  return {
-    type: 'modal',
-    callback_id: 'leave_balance_view',
-    title: { type: 'plain_text', text: 'My Balance' },
-    close: { type: 'plain_text', text: 'Close' },
-    blocks: [{ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } }],
-  };
+// Display labels for leave types — must mirror LEAVE_TYPE_LABELS in the backend
+// (backend/models/leaves.py) so both surfaces read identically.
+const LEAVE_TYPE_LABELS = {
+  earned: 'Earned',
+  sick: 'Sick',
+  casual: 'Casual',
+  sick_and_casual: 'Sick & Casual',
+  bereavement: 'Bereavement',
+  marriage: 'Marriage',
+  maternity: 'Maternity',
+  paternity: 'Paternity',
+  lwp: 'Leave Without Pay',
+};
+
+// The display label for a leave type, e.g. 'lwp' → 'Leave Without Pay'.
+function typeLabel(leaveType) {
+  return LEAVE_TYPE_LABELS[leaveType] ||
+    String(leaveType).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// ---------- Modal: holidays (pushed, read-only) ----------
-function holidaysView(holidays) {
-  const upcoming = [...holidays].sort((a, b) => a.date.localeCompare(b.date));
-  const text = upcoming.map((h) =>
-    `• *${dayjs(h.date).format('ddd, DD MMM YYYY')}* — ${h.name}`
-  ).join('\n');
-  return {
-    type: 'modal',
-    callback_id: 'leave_holidays_view',
-    title: { type: 'plain_text', text: 'Holiday Calendar' },
-    close: { type: 'plain_text', text: 'Close' },
-    blocks: [
-      { type: 'section', text: { type: 'mrkdwn', text: text || '_No holidays configured._' } },
-    ],
-  };
+// A user-facing noun phrase, e.g. 'Earned leave', but 'Leave Without Pay' as-is
+// (never 'Leave Without Pay leave'). Mirrors leave_phrase() in the backend.
+function leavePhrase(leaveType) {
+  const label = typeLabel(leaveType);
+  return /leave/i.test(label) ? label : `${label} leave`;
 }
 
 // ---------- DM: approval request sent to a manager ----------
 // leave      — backend LeaveResponse object
 // applicant  — BotUserResponse (the person whose leave it is)
-// stepLabel  — e.g. "Step 1 of 2" or "Single approval"
 // days       — number of working days
-function approverMessage(leave, applicant, stepLabel, days, overLimit = false) {
-  const dateStr = leave.start_date === leave.end_date
-    ? leave.start_date
-    : `${leave.start_date} → ${leave.end_date}`;
-  const typeLabel = leave.leave_type.charAt(0).toUpperCase() + leave.leave_type.slice(1);
+function approverMessage(leave, applicant, days, overLimit = false) {
+  const dateStr = dateRange(leave.start_date, leave.end_date);
+  const phrase = leavePhrase(leave.leave_type);
+  const firstName = (applicant.name || '').split(' ')[0] || applicant.name;
   const overLimitLine = overLimit
-    ? `\n⚠️ *This will exceed ${applicant.name}'s ${leave.leave_type} leave balance.*`
+    ? `\n⚠️ This request will exceed ${firstName}'s ${phrase.toLowerCase()} balance.`
+    : '';
+  const exceptionLine = leave.is_exception
+    ? '\n🚨 Exception request — notice-period rules were waived.'
     : '';
   return {
-    text: `Leave request #${leave.id} from ${applicant.name}`,
+    text: `Leave approval needed for ${applicant.name}`,
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*Leave request* \`#${leave.id}\`  ·  _${stepLabel}_\n` +
-                `*From:* ${applicant.name} (${applicant.role})\n` +
-                `*Type:* ${typeLabel}\n` +
-                `*Dates:* ${dateStr}  (*${days}* working day${days === 1 ? '' : 's'})\n` +
-                `*Note:* ${leave.note || '—'}` +
-                overLimitLine,
+          text: `*Leave approval needed*\n` +
+                `*${applicant.name}* (${applicant.role}) has requested time off and needs your approval.\n\n` +
+                `*Type:*  ${phrase}\n` +
+                `*Dates:*  ${dateStr}  (${days} working day${days === 1 ? '' : 's'})\n` +
+                `*Note:*  ${leave.note || '—'}` +
+                overLimitLine +
+                exceptionLine,
         },
       },
       {
@@ -163,60 +89,6 @@ function approverMessage(leave, applicant, stepLabel, days, overLimit = false) {
         ],
       },
     ],
-  };
-}
-
-// ---------- Modal: team availability ----------
-function teamAvailabilityView(data) {
-  const today = dayjs().format('ddd, D MMM YYYY');
-  const blocks = [
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `:calendar: *${today}*` }] },
-    { type: 'divider' },
-  ];
-
-  // On Leave section
-  blocks.push({ type: 'section', text: { type: 'mrkdwn',
-    text: `:palm_tree: *On Leave Today*  ·  ${data.on_leave.length}` } });
-
-  if (data.on_leave.length === 0) {
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '_Nobody is on leave today._' } });
-  } else {
-    const lines = data.on_leave.map(p => {
-      const isMultiDay = p.end_date > dayjs().format('YYYY-MM-DD');
-      const until = isMultiDay ? `  ·  back ${dayjs(p.end_date).add(1, 'day').format('D MMM')}` : '';
-      return `• *${p.name}* — ${p.leave_type}${until}`;
-    });
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
-  }
-
-  blocks.push({ type: 'divider' });
-
-  // Available section — grouped by status
-  blocks.push({ type: 'section', text: { type: 'mrkdwn',
-    text: `:white_check_mark: *Available*  ·  ${data.available.length}` } });
-
-  if (data.available.length === 0) {
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '_Everyone is on leave!_' } });
-  } else {
-    const groups = [
-      { key: 'In Office',     emoji: ':office:',             label: 'In Office'       },
-      { key: 'WFH',           emoji: ':house_with_garden:',  label: 'Working From Home' },
-      { key: 'Out of Office', emoji: ':bust_in_silhouette:', label: 'Out of Office'   },
-    ];
-    for (const g of groups) {
-      const people = data.available.filter(p => p.status === g.key);
-      if (people.length === 0) continue;
-      blocks.push({ type: 'section', text: { type: 'mrkdwn',
-        text: `${g.emoji} *${g.label}*\n${people.map(p => `• ${p.name}`).join('\n')}` } });
-    }
-  }
-
-  return {
-    type: 'modal',
-    callback_id: 'team_availability_view',
-    title: { type: 'plain_text', text: 'Team Availability' },
-    close: { type: 'plain_text', text: 'Close' },
-    blocks,
   };
 }
 
@@ -241,11 +113,9 @@ function rejectReasonView(leaveId, channel, ts) {
 // leave — backend LeaveResponse; summaryLine — mrkdwn string
 function decidedBlocks(leave, summaryLine) {
   const applicantName = leave.user?.name || 'Unknown';
+  const dateStr = dateRange(leave.start_date, leave.end_date);
   return [{ type: 'section', text: { type: 'mrkdwn',
-    text: `\`#${leave.id}\` · ${applicantName}\n${summaryLine}` } }];
+    text: `*${applicantName}* · ${leavePhrase(leave.leave_type)} · ${dateStr}\n${summaryLine}` } }];
 }
 
-module.exports = {
-  menuView, applyView, balanceView, holidaysView,
-  approverMessage, rejectReasonView, decidedBlocks, teamAvailabilityView,
-};
+module.exports = { approverMessage, rejectReasonView, decidedBlocks, fmtDate, dateRange, typeLabel, leavePhrase };

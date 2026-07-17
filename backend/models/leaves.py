@@ -4,7 +4,8 @@ from enum import StrEnum
 from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Index, Integer, UniqueConstraint
+from core.time import now_ist
 from db.database import Base
 
 if TYPE_CHECKING:
@@ -69,6 +70,18 @@ LEAVE_TYPE_LABELS: dict[LeaveType, str] = {
 }
 
 
+def leave_type_label(leave_type) -> str:
+    """The display label for a leave type, e.g. LeaveType.lwp → 'Leave Without Pay'."""
+    return LEAVE_TYPE_LABELS.get(leave_type, str(leave_type).replace("_", " ").title())
+
+
+def leave_phrase(leave_type) -> str:
+    """A user-facing noun phrase for a leave type, e.g. 'Earned leave', but
+    'Leave Without Pay' as-is (never 'Leave Without Pay leave')."""
+    label = leave_type_label(leave_type)
+    return label if "leave" in label.lower() else f"{label} leave"
+
+
 class LeaveStatus(StrEnum):
     pending = "pending"
     approved = "approved"
@@ -96,13 +109,24 @@ class Leave(Base):
 
     is_exception: Mapped[bool] = mapped_column(default=False)
 
+    # True when a leave was logged by an admin / Head of Product on the user's
+    # behalf, rather than requested by the user. Feeds the leave-hygiene score as
+    # a "HoP-logged absence" event — see core/leave_hygiene.py.
+    created_by_admin: Mapped[bool] = mapped_column(default=False)
+
     status: Mapped[LeaveStatus] = mapped_column(Enum(LeaveStatus), default=LeaveStatus.pending)
 
     approvals: Mapped[list["LeaveApproval"]] = relationship(
         "LeaveApproval", back_populates="leave", cascade="all, delete-orphan", order_by="LeaveApproval.step"
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_ist)
+
+    __table_args__ = (
+        Index("ix_leaves_user_id", "user_id"),
+        Index("ix_leaves_status_start", "status", "start_date"),
+        Index("ix_leaves_start_end", "start_date", "end_date"),
+    )
 
 
 class LeaveApproval(Base):
@@ -120,6 +144,11 @@ class LeaveApproval(Base):
 
     leave: Mapped["Leave"] = relationship("Leave", back_populates="approvals")
     approver: Mapped["User"] = relationship("User", foreign_keys=[approver_id])
+
+    __table_args__ = (
+        Index("ix_leave_approvals_approver_status", "approver_id", "status"),
+        Index("ix_leave_approvals_leave_id", "leave_id"),
+    )
 
 
 class LeaveBalance(Base):

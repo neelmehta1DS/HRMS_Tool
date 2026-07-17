@@ -7,7 +7,7 @@ import {
 import { useUser } from "../contexts/UserContext";
 import {
   getMyLeaves, getManagerLeaves, getTeamAllLeaves, getLeaveLimits,
-  getHolidays, getLeaveRules, getLeaveBalances,
+  getHolidays, getLeaveRules, getLeaveBalances, getMyHygiene,
   createLeave, updateLeave, approveLeave, rejectLeave, deleteLeave,
   adminCreateLeave, getUsers,
 } from "../lib/api";
@@ -25,6 +25,7 @@ import Spinner from "../components/ui/Spinner";
 import FilterChips from "../components/ui/FilterChips";
 import LeaveTable from "../components/leaves/LeaveTable";
 import LeaveSideDrawer from "../components/leaves/LeaveSideDrawer";
+import { PlanningHygieneCard } from "../components/leaves/LeaveHygiene";
 import { fmtDateRange, leaveBg, leaveLabel, leaveText } from "../components/leaves/leaveDisplay";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1194,6 +1195,7 @@ export default function Leaves() {
   const [managerLeaves, setManagerLeaves] = useState([]);
   const [teamLeaves,    setTeamLeaves]    = useState(null);
   const [balances,      setBalances]      = useState(null);
+  const [hygiene,       setHygiene]       = useState(null);
   const [limits,        setLimits]        = useState(null);
   const [holidays,      setHolidays]      = useState([]);
   const [leaveRules,    setLeaveRules]    = useState(null);
@@ -1245,11 +1247,17 @@ export default function Leaves() {
     setBalances(data);
   }, []);
 
+  // Managerless (L2) leads get null — the card and drawer block then render nothing.
+  const fetchHygiene = useCallback(async () => {
+    const data = await getMyHygiene();
+    setHygiene(data);
+  }, []);
+
   useEffect(() => {
     async function init() {
       setLoading(true);
       try {
-        const promises = [getMyLeaves(), getLeaveLimits(), getHolidays(), getLeaveRules(), getLeaveBalances()];
+        const promises = [getMyLeaves(), getLeaveLimits(), getHolidays(), getLeaveRules(), getLeaveBalances(), getMyHygiene()];
         if (userIsManager) promises.push(getManagerLeaves(), getTeamAllLeaves());
         const results = await Promise.all(promises);
         setMyLeaves(results[0]);
@@ -1257,9 +1265,10 @@ export default function Leaves() {
         setHolidays(results[2]);
         setLeaveRules(results[3]);
         setBalances(results[4]);
+        setHygiene(results[5]);
         if (userIsManager) {
-          setManagerLeaves(results[5]);
-          setTeamLeaves(results[6]);
+          setManagerLeaves(results[6]);
+          setTeamLeaves(results[7]);
         }
       } catch { setError("Failed to load leave data. Please refresh."); }
       finally { setLoading(false); }
@@ -1270,7 +1279,7 @@ export default function Leaves() {
   async function handleApprove(id) {
     await approveLeave(id);
     setManagerLeaves(prev => prev.filter(l => l.id !== id));
-    await Promise.all([fetchMyLeaves(), fetchBalances(), fetchTeamLeaves()]);
+    await Promise.all([fetchMyLeaves(), fetchBalances(), fetchHygiene(), fetchTeamLeaves()]);
   }
 
   async function handleReject(leave, reason) {
@@ -1291,7 +1300,7 @@ export default function Leaves() {
       } : prev);
       setConfirmDeleteId(null);
       setDrawerLeave(null);
-      await Promise.all([fetchBalances(), fetchTeamLeaves()]);
+      await Promise.all([fetchBalances(), fetchHygiene(), fetchTeamLeaves()]);
     } catch { /* silently ignore */ }
     finally { setDeleting(false); }
   }
@@ -1385,14 +1394,16 @@ export default function Leaves() {
         </button>
       </div>
 
-      {/* Balance cards */}
+      {/* Balance cards — a fourth Planning Hygiene card sits at the right for
+          everyone with a manager; L2 leads have no score, so the row stays at 3. */}
       {balances && limits && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className={`grid ${hygiene ? "grid-cols-4" : "grid-cols-3"} gap-4 mb-6`}>
           <BalanceProgressCard label="Earned Leave" type="earned"
             taken={balances.earned?.taken ?? 0} limit={balances.earned?.limit ?? limits.earned} />
           <BalanceProgressCard label="Sick & Casual" type="sick_and_casual"
             taken={balances.sick_and_casual?.taken ?? 0} limit={balances.sick_and_casual?.limit ?? limits.sick_and_casual} />
           <SpecialBalanceCard balances={balances} />
+          <PlanningHygieneCard hygiene={hygiene} />
         </div>
       )}
 
@@ -1483,6 +1494,7 @@ export default function Leaves() {
           context={drawerContext}
           holidays={holidays}
           balances={balances}
+          hygiene={hygiene}
           onClose={() => setDrawerLeave(null)}
           onDelete={id => { setDrawerLeave(null); setConfirmDeleteId(id); }}
           onEdit={leave => { setDrawerLeave(null); setEditLeave(leave); }}
@@ -1494,13 +1506,13 @@ export default function Leaves() {
       {/* Modals */}
       <EditLeaveModal open={!!editLeave} onClose={() => setEditLeave(null)}
         leave={editLeave} holidays={holidays} leaveRules={leaveRules}
-        onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchTeamLeaves()]); }} />
+        onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchHygiene(), fetchTeamLeaves()]); }} />
 
       <RequestLeaveModal open={showRequest} onClose={() => setShowRequest(false)}
         holidays={holidays} leaveRules={leaveRules} unconstrained={userIsL2 || userIsAdmin}
         isAdmin={userIsAdmin} users={userIsAdmin ? allUsers : null} defaultTargetId={user?.id}
         balances={balances}
-        onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchTeamLeaves()]); }} />
+        onSuccess={async () => { await Promise.all([fetchMyLeaves(), fetchBalances(), fetchHygiene(), fetchTeamLeaves()]); }} />
 
       <RejectModal open={!!rejectLeaveObj} onClose={() => setRejectLeaveObj(null)}
         onReject={reason => handleReject(rejectLeaveObj, reason)} />

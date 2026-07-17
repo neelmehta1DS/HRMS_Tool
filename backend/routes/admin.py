@@ -1,4 +1,4 @@
-from datetime import datetime
+from core.time import today_ist
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -6,9 +6,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.balances import recompute_balances
+from core import leave_hygiene
+from core.loaders import LEAVE_LOADS, USER_MANAGER_CHAIN, user_rel_chain
 from core.security import get_current_user
-from core.holidays import HOLIDAYS, _persist_and_reload
-from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES, persist_leave_limits
+from core import config_store
+from core.holidays import HOLIDAYS, reindex
+from core.leave_limits import LEAVE_LIMITS, LEAVE_RULES
 from core.status_history import status_history
 from db.database import get_db
 from models.catchups import Catchup
@@ -23,6 +26,7 @@ from schemas.admin import (
     AdminUserUpdate,
     UserOverviewResponse,
 )
+from schemas.leaves import LeaveResponse
 from schemas.users import UserResponse
 from routes.leaves import compute_balances
 from services.admin_users import delete_user_and_records
@@ -47,7 +51,7 @@ def get_all_users(
     _: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return db.query(User).order_by(User.name).all()
+    return db.query(User).options(USER_MANAGER_CHAIN).order_by(User.name).all()
 
 
 @router.post("/users", response_model=UserResponse, status_code=201)
@@ -159,12 +163,13 @@ class LeaveLimitsUpdate(BaseModel):
 def update_limits(
     body: LeaveLimitsUpdate,
     _: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
 ):
     for field in ("earned", "sick_and_casual", "bereavement", "marriage", "maternity", "paternity", "lwp"):
         val = getattr(body, field)
         if val is not None:
             LEAVE_LIMITS[field] = val
-    persist_leave_limits()
+    config_store.save(db)
     return LEAVE_LIMITS
 
 
@@ -186,6 +191,7 @@ class LeaveRulesUpdate(BaseModel):
 def update_rules(
     body: LeaveRulesUpdate,
     _: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
 ):
     for ladder in ("earned_advance_notice", "casual_advance_notice"):
         rules = getattr(body, ladder)
@@ -197,7 +203,7 @@ def update_rules(
         if val is not None:
             LEAVE_RULES[field] = val
 
-    persist_leave_limits()
+    config_store.save(db)
     return LEAVE_RULES
 
 
@@ -214,11 +220,16 @@ class HolidayUpdate(BaseModel):
 
 
 @router.post("/leaves/holidays", status_code=201)
-def add_holiday(body: HolidayCreate, _: Annotated[User, Depends(require_admin)]):
+def add_holiday(
+    body: HolidayCreate,
+    _: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     if any(h["date"] == body.date for h in HOLIDAYS):
         raise HTTPException(status_code=409, detail="A holiday already exists on that date")
     HOLIDAYS.append({"date": body.date, "name": body.name})
-    _persist_and_reload()
+    reindex()
+    config_store.save(db)
     return HOLIDAYS
 
 
@@ -227,6 +238,7 @@ def update_holiday(
     holiday_date: str,
     body: HolidayUpdate,
     _: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
 ):
     idx = next((i for i, h in enumerate(HOLIDAYS) if h["date"] == holiday_date), None)
     if idx is None:
@@ -237,17 +249,23 @@ def update_holiday(
         HOLIDAYS[idx]["date"] = body.date
     if body.name is not None:
         HOLIDAYS[idx]["name"] = body.name
-    _persist_and_reload()
+    reindex()
+    config_store.save(db)
     return HOLIDAYS
 
 
 @router.delete("/leaves/holidays/{holiday_date}", status_code=204)
-def delete_holiday(holiday_date: str, _: Annotated[User, Depends(require_admin)]):
+def delete_holiday(
+    holiday_date: str,
+    _: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     idx = next((i for i, h in enumerate(HOLIDAYS) if h["date"] == holiday_date), None)
     if idx is None:
         raise HTTPException(status_code=404, detail="Holiday not found")
     HOLIDAYS.pop(idx)
-    _persist_and_reload()
+    reindex()
+    config_store.save(db)
 
 
 # ─── One-shot user overview ───────────────────────────────────────────────────
@@ -264,27 +282,48 @@ def get_user_overview(
     `status_days` defaults to 90 so the page can offer both a one-month and a
     three-month view of the check-in log without a second round trip.
     """
-    user = db.get(User, user_id)
+    # Eager-load the manager chain: this user serializes to the full UserResponse.
+    user = (
+        db.query(User)
+        .options(USER_MANAGER_CHAIN)
+        .filter(User.id == user_id)
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     leaves = (
         db.query(Leave)
+        .options(*LEAVE_LOADS)
         .filter(Leave.user_id == user_id)
         .order_by(Leave.start_date.desc())
         .all()
     )
     catchups = (
         db.query(Catchup)
+        .options(
+            user_rel_chain(Catchup.employee),
+            user_rel_chain(Catchup.manager),
+            user_rel_chain(Catchup.alternate_manager),
+        )
         .filter(Catchup.employee_id == user_id)
         .order_by(Catchup.date_and_time.desc())
         .all()
     )
 
+    # The user's own hygiene score is the same for every one of their leaves, so
+    # compute it once and stamp it onto each row the drawer might open.
+    hygiene = leave_hygiene.compute(db, user)
+    leave_rows = []
+    for lv in leaves:
+        r = LeaveResponse.model_validate(lv)
+        r.user_hygiene = hygiene
+        leave_rows.append(r)
+
     return UserOverviewResponse(
         user=user,
-        balances=compute_balances(db, user_id, datetime.now().year),
-        leaves=leaves,
+        balances=compute_balances(db, user_id, today_ist().year),
+        leaves=leave_rows,
         catchups=catchups,
         status_days=status_history(db, user_id, status_days),
     )
@@ -319,7 +358,10 @@ def create_leave_for_user(
         raise HTTPException(status_code=404, detail="User not found")
     _validate_dates(body.start_date, body.end_date)
 
-    leave = Leave(user_id=user_id, **body.model_dump())
+    # An admin logging a leave the user never requested is a HoP-logged absence
+    # for hygiene-score purposes. Editing an existing leave (below) leaves the
+    # flag untouched — only the act of creation sets it.
+    leave = Leave(user_id=user_id, created_by_admin=True, **body.model_dump())
     db.add(leave)
     db.flush()
     recompute_balances(db, user_id)
