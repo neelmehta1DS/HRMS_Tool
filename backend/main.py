@@ -147,6 +147,10 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
+    # Also accept any Emergent-hosted origin (preview + production) so the same
+    # deployment survives being promoted from preview to prod without an env
+    # update. `allow_credentials=True` forbids "*", hence the regex.
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?(preview\.emergentagent\.com|emergent\.host)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
