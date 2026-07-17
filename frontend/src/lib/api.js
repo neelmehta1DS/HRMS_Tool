@@ -1,8 +1,13 @@
 import axios from "axios";
 
-// Backend base URL. Set VITE_API_URL at build time in production; falls back to
-// the local dev server when unset.
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Backend URL. In production, REACT_APP_BACKEND_URL is injected by the deployment
+// pipeline. All backend routes live under /api (Kubernetes ingress requirement).
+const BACKEND_URL =
+  import.meta.env.REACT_APP_BACKEND_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:8000";
+
+export const API_URL = `${BACKEND_URL.replace(/\/$/, "")}/api`;
 
 const api = axios.create({
   baseURL: API_URL,

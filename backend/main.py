@@ -152,16 +152,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(auth.router)
-app.include_router(users.router)
-app.include_router(leaves.router)
-app.include_router(catchups.router)
-app.include_router(slack_bot.router)
-app.include_router(dashboard.router)
-app.include_router(admin.router)
+# Routers — every backend route is served under /api so the Kubernetes ingress
+# routes it to the backend pod (frontend paths go to the React app).
+API_PREFIX = "/api"
+app.include_router(auth.router,      prefix=API_PREFIX)
+app.include_router(users.router,     prefix=API_PREFIX)
+app.include_router(leaves.router,    prefix=API_PREFIX)
+app.include_router(catchups.router,  prefix=API_PREFIX)
+app.include_router(slack_bot.router, prefix=API_PREFIX)
+app.include_router(dashboard.router, prefix=API_PREFIX)
+app.include_router(admin.router,     prefix=API_PREFIX)
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "healthy"}

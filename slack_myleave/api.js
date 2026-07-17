@@ -19,22 +19,22 @@ const client = axios.create({
  *           l2_manager: { id, name, role, slack_user_id } | null }
  */
 async function getUser(slackUserId) {
-  const res = await client.get(`/bot/user/${encodeURIComponent(slackUserId)}`);
+  const res = await client.get(`/api/bot/user/${encodeURIComponent(slackUserId)}`);
   return res.data;
 }
 
 async function getLeave(leaveId) {
-  const res = await client.get(`/bot/leaves/${leaveId}`);
+  const res = await client.get(`/api/bot/leaves/${leaveId}`);
   return res.data;
 }
 
 async function approveLeave(leaveId, approverSlackId) {
-  const res = await client.patch(`/bot/leaves/${leaveId}/approve`, { slack_user_id: approverSlackId });
+  const res = await client.patch(`/api/bot/leaves/${leaveId}/approve`, { slack_user_id: approverSlackId });
   return res.data;
 }
 
 async function rejectLeave(leaveId, approverSlackId, reason) {
-  const res = await client.patch(`/bot/leaves/${leaveId}/reject`, {
+  const res = await client.patch(`/api/bot/leaves/${leaveId}/reject`, {
     slack_user_id: approverSlackId,
     reason: reason || '',
   });
@@ -42,7 +42,7 @@ async function rejectLeave(leaveId, approverSlackId, reason) {
 }
 
 async function setApprovalMessage(approvalId, channel, ts) {
-  const res = await client.patch(`/bot/leave-approvals/${approvalId}/message`, { channel, ts });
+  const res = await client.patch(`/api/bot/leave-approvals/${approvalId}/message`, { channel, ts });
   return res.data;
 }
 

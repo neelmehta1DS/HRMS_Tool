@@ -32,13 +32,13 @@ def get_flow() -> Flow:
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [f"{settings.APP_BASE_URL}/auth/oauth2callback"],
+            "redirect_uris": [f"{settings.APP_BASE_URL}/api/auth/oauth2callback"],
         }
     }
     return Flow.from_client_config(
         client_config=client_config,
         scopes=SCOPES,
-        redirect_uri=f"{settings.APP_BASE_URL}/auth/oauth2callback",
+        redirect_uri=f"{settings.APP_BASE_URL}/api/auth/oauth2callback",
     )
 
 
@@ -110,8 +110,8 @@ def oauth2callback(
         key="jwt_token",
         value=token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=not settings.DEBUG,
+        samesite="lax" if settings.DEBUG else "none",
         max_age=60 * 60 * 24 * 7,
     )
     return response
@@ -127,8 +127,8 @@ def logout(response: Response):
     response.delete_cookie(
         key="jwt_token",
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=not settings.DEBUG,
+        samesite="lax" if settings.DEBUG else "none",
     )
     return {"message": "Logged out"}
 
