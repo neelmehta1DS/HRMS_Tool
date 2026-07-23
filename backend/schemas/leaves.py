@@ -76,7 +76,7 @@ class LeaveUpdate(BaseModel):
 
 
 class LeaveRejectRequest(BaseModel):
-    reason: str
+    reason: Optional[str] = None
 
 
 class LeaveBalanceEntry(BaseModel):

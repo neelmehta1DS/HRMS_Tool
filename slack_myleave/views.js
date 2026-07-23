@@ -102,8 +102,9 @@ function rejectReasonView(leaveId, channel, ts) {
     submit: { type: 'plain_text', text: 'Reject' },
     close: { type: 'plain_text', text: 'Cancel' },
     blocks: [{
-      type: 'input', block_id: 'reason',
+      type: 'input', block_id: 'reason', optional: true,
       label: { type: 'plain_text', text: 'Reason for rejection' },
+      hint: { type: 'plain_text', text: 'Optional — leave blank to decline without a note.' },
       element: { type: 'plain_text_input', action_id: 'val', multiline: true },
     }],
   };

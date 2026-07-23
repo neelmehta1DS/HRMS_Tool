@@ -145,7 +145,7 @@ def reject_leave(
 
     approval_step.status = ApprovalStatus.rejected
     approval_step.decided_at = now_ist()
-    approval_step.rejection_note = body.reason or ""
+    approval_step.rejection_note = (body.reason or "").strip() or None
     leave.status = LeaveStatus.rejected
 
     db.commit()

@@ -96,7 +96,7 @@ app.action('leave_reject', async ({ ack, body, client }) => {
 app.view('leave_reject_reason', async ({ ack, body, view, client }) => {
   await ack();
   const { leaveId, channel, ts } = JSON.parse(view.private_metadata);
-  const reason        = view.state.values.reason?.val?.value?.trim() || '(no reason given)';
+  const reason        = view.state.values.reason?.val?.value?.trim() || '';
   const approverSlack = effectiveSlackId(body.user.id);
 
   let leave;
@@ -114,7 +114,7 @@ app.view('leave_reject_reason', async ({ ack, body, view, client }) => {
   await client.chat.update({
     channel, ts,
     text: `You rejected ${leave.user?.name || 'the'}'s leave request`,
-    blocks: V.decidedBlocks(leave, `:x: You rejected this request. Reason: ${reason}`),
+    blocks: V.decidedBlocks(leave, `:x: You rejected this request.${reason ? ` Reason: ${reason}` : ''}`),
   }).catch(() => {});
 
   const phrase = V.leavePhrase(leave.leave_type);
@@ -122,8 +122,8 @@ app.view('leave_reject_reason', async ({ ack, body, view, client }) => {
   await dm(client, leave.user?.slack_user_id, {
     text: `Your ${phrase} request was rejected.`,
     blocks: [{ type: 'section', text: { type: 'mrkdwn',
-      text: `:x: Your *${phrase}* request for *${dateStr}* was rejected by *${approverName}*.\n` +
-            `*Reason:* ${reason}` } }],
+      text: `:x: Your *${phrase}* request for *${dateStr}* was rejected by *${approverName}*.` +
+            (reason ? `\n*Reason:* ${reason}` : '') } }],
   });
 });
 

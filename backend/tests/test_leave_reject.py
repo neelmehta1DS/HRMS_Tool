@@ -38,6 +38,31 @@ def test_reject_stores_reason_on_approval_row(client_as, manager, skip_manager):
 
 
 # ---------------------------------------------------------------------------
+# The note is optional — approvers may decline without explaining themselves
+# ---------------------------------------------------------------------------
+
+def test_reject_without_a_reason_is_allowed(client_as, manager, skip_manager):
+    leave = _create_earned_leave(client_as(manager))
+
+    resp = client_as(skip_manager).patch(f"/leaves/{leave['id']}/reject", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "rejected"
+    rejected_step = next(a for a in resp.json()["approvals"] if a["status"] == "rejected")
+    assert rejected_step["rejection_note"] is None
+
+
+def test_blank_reason_is_stored_as_no_note(client_as, manager, skip_manager):
+    """A whitespace-only note is normalised to null so the UI omits it entirely."""
+    leave = _create_earned_leave(client_as(manager))
+
+    resp = _reject(client_as(skip_manager), leave["id"], reason="   ")
+
+    rejected_step = next(a for a in resp.json()["approvals"] if a["status"] == "rejected")
+    assert rejected_step["rejection_note"] is None
+
+
+# ---------------------------------------------------------------------------
 # Two-step rejection: ic requests, manager rejects at step 1
 # ---------------------------------------------------------------------------
 

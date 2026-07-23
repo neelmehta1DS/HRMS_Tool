@@ -112,7 +112,7 @@ def client_as(db):
                            lazy-loaded relationships work in the route's own
                            session (avoids DetachedInstanceError)
     """
-    from main import app
+    from main import app, API_PREFIX
 
     def _make(user: User) -> TestClient:
         uid = user.id
@@ -131,7 +131,11 @@ def client_as(db):
 
         app.dependency_overrides[get_db] = override_get_db
         app.dependency_overrides[get_current_user] = override_get_current_user
-        return TestClient(app, raise_server_exceptions=True)
+        # Every backend route is mounted under /api (see main.API_PREFIX). Baking
+        # that into the client's base URL — as the frontend does in lib/api.js —
+        # keeps the prefix out of every call site, so tests request "/leaves".
+        return TestClient(app, base_url=f"http://testserver{API_PREFIX}",
+                          raise_server_exceptions=True)
 
     yield _make
     app.dependency_overrides.clear()

@@ -651,7 +651,8 @@ def reject_leave(
 
     approval_step.status = ApprovalStatus.rejected
     approval_step.decided_at = now_ist()
-    approval_step.rejection_note = body.reason
+    note = (body.reason or "").strip() or None
+    approval_step.rejection_note = note
     leave.status = LeaveStatus.rejected
 
     date_str = slack.date_range(leave.start_date, leave.end_date)
@@ -666,8 +667,8 @@ def reject_leave(
         slack.dm(user.slack_user_id,
             text=f"Your {phrase} request was rejected.",
             blocks=[{"type": "section", "text": {"type": "mrkdwn",
-                "text": f":x: Your *{phrase}* request for *{date_str}* was rejected by *{current_user.name}*.\n"
-                        f"*Reason:* {body.reason}"}}])
+                "text": f":x: Your *{phrase}* request for *{date_str}* was rejected by *{current_user.name}*."
+                        + (f"\n*Reason:* {note}" if note else "")}}])
 
     db.commit()
     db.refresh(leave)

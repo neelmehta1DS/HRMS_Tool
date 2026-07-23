@@ -462,9 +462,12 @@ function StyledDropdown({ value, onSelect, options, placeholder }) {
       <button ref={triggerRef} type="button" onClick={toggle}
         className={`flex items-center justify-between gap-3 w-full border-[1.5px] rounded-xl px-4 py-3 text-[15px] transition-colors cursor-pointer bg-white hover:border-slate-300
           ${selected ? "text-slate-800 border-slate-300" : "text-slate-400 border-slate-200"}`}>
-        <span className="truncate">
-          {selected ? selected.label : placeholder}
-          {selected && selected.note && <span className="text-slate-400 font-normal"> · {selected.note}</span>}
+        <span className="flex items-center gap-2.5 min-w-0">
+          {selected?.avatar && <Avatar name={selected.avatar} size="sm" />}
+          <span className="truncate">
+            {selected ? selected.label : placeholder}
+            {selected && selected.note && <span className="text-slate-400 font-normal"> · {selected.note}</span>}
+          </span>
         </span>
         <ChevronDown size={16} className={`text-slate-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -480,9 +483,12 @@ function StyledDropdown({ value, onSelect, options, placeholder }) {
                 onClick={() => { onSelect(o.id); setOpen(false); }}
                 className={`w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors
                   ${active ? "bg-[#eef3ff]" : "hover:bg-slate-50"}`}>
-                <span className="min-w-0">
-                  <span className={`block text-[14px] font-semibold ${active ? "text-[#2f6bff]" : "text-slate-700"}`}>{o.label}</span>
-                  {o.note && <span className="block text-[12px] text-slate-400 mt-0.5">{o.note}</span>}
+                <span className="flex items-center gap-2.5 min-w-0">
+                  {o.avatar && <Avatar name={o.avatar} size="sm" />}
+                  <span className="min-w-0">
+                    <span className={`block text-[14px] font-semibold truncate ${active ? "text-[#2f6bff]" : "text-slate-700"}`}>{o.label}</span>
+                    {o.note && <span className="block text-[12px] text-slate-400 mt-0.5 truncate">{o.note}</span>}
+                  </span>
                 </span>
                 {active && <Check size={16} className="text-[#2f6bff] shrink-0" />}
               </button>
@@ -741,7 +747,7 @@ export function RequestLeaveModal({ open, onClose, holidays, leaveRules, unconst
             <StyledDropdown
               value={adminTargetId}
               onSelect={(id) => setAdminTargetId(id)}
-              options={users.map(u => ({ id: u.id, label: u.name, note: u.role || undefined }))}
+              options={users.map(u => ({ id: u.id, label: u.name, note: u.role || undefined, avatar: u.name }))}
               placeholder="Select an employee…"
             />
           </div>
@@ -1117,9 +1123,8 @@ function RejectModal({ open, onClose, onReject }) {
   useEffect(() => { if (!open) { setReason(""); setError(""); } }, [open]);
 
   async function handleSubmit() {
-    if (!reason.trim()) { setError("Reason is required."); return; }
     setLoading(true);
-    try { await onReject(reason.trim()); onClose(); }
+    try { await onReject(reason.trim() || null); onClose(); }
     catch { setError("Failed to reject leave."); }
     finally { setLoading(false); }
   }
@@ -1127,8 +1132,8 @@ function RejectModal({ open, onClose, onReject }) {
   return (
     <Modal open={open} onClose={onClose} title="Decline leave request" size="sm">
       <div className="p-6">
-        <p className="text-[13px] text-slate-600 mb-4">Please provide a reason for declining this leave request.</p>
-        <textarea value={reason} onChange={e => { setReason(e.target.value); setError(""); }} rows={3} placeholder="Reason for declining…"
+        <p className="text-[13px] text-slate-600 mb-4">Add a reason for declining this request — optional, but it helps the requester.</p>
+        <textarea value={reason} onChange={e => { setReason(e.target.value); setError(""); }} rows={3} placeholder="Reason for declining… (optional)"
           className="w-full border-[1.5px] border-slate-200 rounded-xl px-4 py-3 text-[14px] font-[inherit] placeholder-slate-400 focus:outline-none focus:border-[#2f6bff] resize-none" />
         {error && <p className="text-[12px] text-red-600 mt-2">{error}</p>}
         <div className="flex gap-3 mt-4">
